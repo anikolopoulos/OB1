@@ -27,18 +27,83 @@ Every contribution lives in its own subfolder under the right category and must 
 ## Architecture
 
 The system runs as a Docker Compose stack:
-- **PostgreSQL** (pgvector/pgvector:pg17) — stores thoughts with vector embeddings, extension tables
+- **PostgreSQL** (pgvector/pgvector:pg18) — stores thoughts with vector embeddings, extension tables
 - **Node.js app** (Hono + MCP SDK) — serves MCP tools, Admin API, and Slack capture
-- **Caddy** — reverse proxy with auto-TLS
+- **Reverse proxy** — Caddy (included), Traefik, or Cloudflare for HTTPS
 - **LiteLLM** (external) — OpenAI-compatible AI gateway for embeddings and metadata extraction
 
 Multi-brain isolation: each user gets their own PostgreSQL schema (`brain_<slug>`), managed via the Admin API. The MCP server sets `search_path` per request based on the API key.
 
+**Important**: The MCP endpoint (`/mcp`) uses the Node.js native `StreamableHTTPServerTransport` (not the web-standard version) and is handled by a raw `http.createServer` handler, bypassing Hono. This is required for SSE streaming to work correctly through reverse proxies and Cloudflare. All other routes (admin, slack, health) go through Hono.
+
 Key deploy files:
 - `deploy/docker-compose.yml` — service definitions
-- `deploy/app/src/index.ts` — main entry point (Hono app)
+- `deploy/app/src/index.ts` — main entry point (raw HTTP for MCP, Hono for the rest)
 - `deploy/app/src/mcp/tools/` — all MCP tool implementations
 - `deploy/db/init/` — SQL init scripts (run automatically on first boot)
+
+## Common Operations
+
+### Create a new brain
+```bash
+curl -X POST https://<domain>/admin/brains \
+  -H "Authorization: Bearer $ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"slug":"<name>","display_name":"<Display Name>"}'
+```
+Save the returned `api_key` — it is shown only once. The MCP URL is `https://<domain>/mcp?key=<api_key>`.
+
+### Connect a brain to Claude Code
+```bash
+claude mcp add <name>-brain --transport http "https://<domain>/mcp?key=<api_key>"
+```
+
+### Connect a brain to Claude Desktop (Mac)
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json` under `mcpServers`:
+```json
+"<name>-brain": {
+  "command": "npx",
+  "args": ["mcp-remote", "https://<domain>/mcp?key=<api_key>"]
+}
+```
+Restart Claude Desktop after editing.
+
+### Install an extension on a brain
+```bash
+curl -X POST https://<domain>/admin/brains/<slug>/extensions/<name> \
+  -H "Authorization: Bearer $ADMIN_API_KEY"
+```
+Available extensions: `household`, `maintenance`, `calendar`, `meals`, `crm`, `jobhunt`.
+
+### Map a Slack channel to a brain
+```bash
+curl -X POST https://<domain>/admin/brains/<slug>/slack \
+  -H "Authorization: Bearer $ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"channel_id":"<SLACK_CHANNEL_ID>"}'
+```
+
+### List all brains
+```bash
+curl https://<domain>/admin/brains \
+  -H "Authorization: Bearer $ADMIN_API_KEY"
+```
+
+### Check server health
+```bash
+curl https://<domain>/health
+```
+
+### View logs (on the server)
+```bash
+docker compose logs -f app        # App logs
+docker compose logs -f postgres   # Database logs
+```
+
+### Update the server
+```bash
+git pull && docker compose build app && docker compose up -d app
+```
 
 ## Guard Rails
 
