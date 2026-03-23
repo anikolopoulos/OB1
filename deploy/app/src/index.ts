@@ -1,7 +1,7 @@
-import { serve } from '@hono/node-server';
+import http from 'node:http';
+import { getRequestListener } from '@hono/node-server';
 import { Hono } from 'hono';
-import type { Context } from 'hono';
-import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { config } from './config.js';
 import { resolveBrain } from './auth/brain-resolver.js';
 import { withBrainSchema } from './db/with-schema.js';
@@ -12,37 +12,47 @@ import { adminRouter } from './admin/router.js';
 import { slackRouter } from './slack/router.js';
 import type { ToolContext } from './mcp/tool-context.js';
 
+// ── Hono app (admin, slack, health — everything except /mcp) ─────────────────
 const app = new Hono();
 
-// ── Health check ──────────────────────────────────────────────────────────────
 app.get('/health', (c) =>
   c.json({ status: 'ok', service: 'ob1', uptime: process.uptime() }),
 );
 
-// ── Admin API ─────────────────────────────────────────────────────────────────
 app.route('/admin', adminRouter);
-
-// ── Slack webhook ─────────────────────────────────────────────────────────────
 app.route('/slack', slackRouter);
 
-// ── MCP endpoint ──────────────────────────────────────────────────────────────
+app.onError((err, c) => {
+  console.error('[server] Unhandled error:', err);
+  return c.json({ error: 'Internal server error' }, 500);
+});
 
-function extractApiKey(c: Context): string | undefined {
-  return c.req.query('key') ?? c.req.header('x-brain-key');
-}
+const honoListener = getRequestListener(app.fetch);
 
-async function handleMcpRequest(c: Context): Promise<Response> {
-  const apiKey = extractApiKey(c);
+// ── MCP handler (raw Node.js req/res for proper SSE streaming) ───────────────
+async function handleMcp(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+): Promise<void> {
+  const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
+  const apiKey =
+    url.searchParams.get('key') ??
+    (req.headers['x-brain-key'] as string | undefined);
+
   if (!apiKey) {
-    return c.json({ error: 'API key required (query param "key" or header "x-brain-key")' }, 401);
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'API key required (query param "key" or header "x-brain-key")' }));
+    return;
   }
 
   const brain = await resolveBrain(apiKey);
   if (!brain) {
-    return c.json({ error: 'Invalid API key' }, 401);
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Invalid API key' }));
+    return;
   }
 
-  return withBrainSchema(brain.schemaName, async (query) => {
+  await withBrainSchema(brain.schemaName, async (query) => {
     const ctx: ToolContext = {
       query,
       getEmbedding,
@@ -51,57 +61,48 @@ async function handleMcpRequest(c: Context): Promise<Response> {
     };
 
     const server = await createMcpServer(ctx);
-
-    const transport = new WebStandardStreamableHTTPServerTransport({
+    const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
     });
 
     await server.connect(transport);
 
     try {
-      // Claude Desktop Accept header fix: some clients don't send
-      // text/event-stream in Accept, which the transport expects.
-      const incomingRequest = c.req.raw;
-      const accept = incomingRequest.headers.get('accept') ?? '';
-      let patchedRequest = incomingRequest;
-
-      if (!accept.includes('text/event-stream')) {
-        const headers = new Headers(incomingRequest.headers);
-        headers.set(
-          'accept',
-          accept ? `${accept}, text/event-stream` : 'text/event-stream',
-        );
-        patchedRequest = new Request(incomingRequest.url, {
-          method: incomingRequest.method,
-          headers,
-          body: incomingRequest.body,
-          // @ts-expect-error -- duplex is required for streaming bodies
-          duplex: 'half',
-        });
-      }
-
-      return await transport.handleRequest(patchedRequest);
+      await transport.handleRequest(req, res);
     } finally {
       await server.close().catch(() => {});
     }
   });
 }
 
-// Handle POST/GET/DELETE for /mcp and /mcp/* (session-based transports)
-app.on(['POST', 'GET', 'DELETE'], ['/mcp', '/mcp/*'], handleMcpRequest);
-
-// ── Global error handler ─────────────────────────────────────────────────────
-app.onError((err, c) => {
-  console.error('[server] Unhandled error:', err);
-  return c.json({ error: 'Internal server error' }, 500);
-});
-
-// ── Start server ──────────────────────────────────────────────────────────────
+// ── HTTP server: route /mcp to raw handler, everything else to Hono ──────────
 const port = parseInt(config.PORT, 10);
 
-serve({ fetch: app.fetch, port }, (info) => {
-  console.log(`ob1 server listening on http://localhost:${info.port}`);
-  console.log(`  MCP:   POST /mcp`);
+const server = http.createServer(async (req, res) => {
+  const url = req.url ?? '/';
+
+  if (url.startsWith('/mcp')) {
+    try {
+      await handleMcp(req, res);
+    } catch (err) {
+      console.error('[mcp] Unhandled error:', err);
+      if (!res.headersSent) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+      }
+      if (!res.writableEnded) {
+        res.end(JSON.stringify({ error: 'Internal server error' }));
+      }
+    }
+    return;
+  }
+
+  // Everything else goes through Hono
+  honoListener(req, res);
+});
+
+server.listen(port, () => {
+  console.log(`ob1 server listening on http://localhost:${port}`);
+  console.log(`  MCP:   POST /mcp (Node.js native streaming)`);
   console.log(`  Admin: /admin/*`);
   console.log(`  Slack: POST /slack/events`);
   console.log(`  Health: GET /health`);
