@@ -2,634 +2,200 @@
 
 This is the core of Open Brain — the foundation everything else builds on. Once this is running, you'll have a personal knowledge system that any AI can read from and write to. Every extension, recipe, and integration in this repo starts here.
 
-> **Prefer video?** Watch the [Open Brain Startup Guide](https://vimeo.com/1174979042/f883f6489a) (~27 min) for a full video walkthrough of this setup process. Follow along with the video or use this written guide — they cover the same steps.
+> **Prefer video?** Watch the [Open Brain Startup Guide](https://vimeo.com/1174979042/f883f6489a) (~27 min) for a walkthrough of the original Supabase-based setup. The concepts are the same, but **this written guide covers the current Docker-based architecture** — follow this guide for the most up-to-date setup steps.
 
-About 30 minutes. Zero coding experience. Two services:
+About 15 minutes. Zero coding experience. One VPS, three Docker containers:
 
-- **[Supabase](https://supabase.com)** — Your database (free tier)
-- **[OpenRouter](https://openrouter.ai)** — Your AI gateway (~$5 in credits, lasts months)
+- **PostgreSQL** (pgvector) — Your database, with schema-per-user isolation
+- **Node.js app** — Your MCP server + Admin API + Slack webhook handler
+- **Caddy** — Automatic HTTPS reverse proxy
 
----
-
-## 📋 Credential Tracker
-
-You're going to generate API keys, passwords, and IDs across three different services. You'll need them at specific steps later — sometimes minutes after you create them, sometimes much later. Don't trust your memory.
-
-> [!CAUTION]
-> 🛑🛑🛑 **STOP. Download this before you do anything else.** 🛑🛑🛑
->
-> ### 📥 [Download the Credential Tracker (.xlsx)](https://raw.githubusercontent.com/NateBJones-Projects/OB1/main/docs/open-brain-credential-tracker.xlsx)
->
-> This spreadsheet is your lifeline for the entire setup. Every API key, password, and URL you generate goes here. Some of these credentials **cannot be retrieved once you leave the page** — if you don't save them immediately, you'll have to start over.
->
-> Open it now. Keep it open. Fill it in as you go.
->
-> 🛑🛑🛑 **Do not skip this.** 🛑🛑🛑
+All AI access goes through **LiteLLM** (or any OpenAI-compatible endpoint) for embeddings and metadata extraction.
 
 ---
 
-![Step 1](https://img.shields.io/badge/Step_1-Create_Your_Supabase_Project-E53935?style=for-the-badge)
+## What You'll Need
 
-Supabase is your database. It stores your thoughts as raw text, vector embeddings, and structured metadata. It also gives you a REST API automatically.
+Before you start, make sure you have:
 
-1. Go to [supabase.com](https://supabase.com) and sign up (GitHub login is fastest)
-2. Click **New Project** in the dashboard
-3. Pick your organization (default is fine)
-4. Set Project name: `open-brain` (or whatever you want)
-5. Generate a strong Database password — paste into credential tracker NOW
-6. Pick the Region closest to you
-7. Click **Create new project** and wait 1–2 minutes
-
-> [!IMPORTANT]
-> Grab your **Project ref** — it's the random string in your dashboard URL: `supabase.com/dashboard/project/THIS_PART`. Paste it into the tracker.
-
-✅ **Done when:** You have your **Project ref** and **Database password** saved in your credential tracker.
-
----
-
-![Step 2](https://img.shields.io/badge/Step_2-Set_Up_the_Database-F4511E?style=for-the-badge)
-
-Four SQL commands, pasted one at a time. This creates your storage table, your search function, your security policy, and the permissions your server needs to read and write data.
-
-![2.1](https://img.shields.io/badge/2.1-Enable_the_Vector_Extension-555?style=for-the-badge&labelColor=F4511E)
-
-In the left sidebar: **Database → Extensions** → search for "vector" → flip **pgvector ON**.
-
-![2.2](https://img.shields.io/badge/2.2-Create_the_Thoughts_Table-555?style=for-the-badge&labelColor=F4511E)
-
-In the left sidebar: **SQL Editor → New query** → paste and Run:
-
-<details>
-<summary>📋 <strong>SQL: Thoughts table + indexes</strong> (click to expand)</summary>
-
-```sql
--- Create the thoughts table
-create table thoughts (
-  id uuid default gen_random_uuid() primary key,
-  content text not null,
-  embedding vector(1536),
-  metadata jsonb default '{}'::jsonb,
-  created_at timestamptz default now(),
-  updated_at timestamptz default now()
-);
-
--- Index for fast vector similarity search
-create index on thoughts
-  using hnsw (embedding vector_cosine_ops);
-
--- Index for filtering by metadata fields
-create index on thoughts using gin (metadata);
-
--- Index for date range queries
-create index on thoughts (created_at desc);
-
--- Auto-update the updated_at timestamp
-create or replace function update_updated_at()
-returns trigger as $$
-begin
-  new.updated_at = now();
-  return new;
-end;
-$$ language plpgsql;
-
-create trigger thoughts_updated_at
-  before update on thoughts
-  for each row
-  execute function update_updated_at();
-```
-
-</details>
-
-![2.3](https://img.shields.io/badge/2.3-Create_the_Search_Function-555?style=for-the-badge&labelColor=F4511E)
-
-New query → paste and Run:
-
-<details>
-<summary>📋 <strong>SQL: Semantic search function</strong> (click to expand)</summary>
-
-```sql
-create or replace function match_thoughts(
-  query_embedding vector(1536),
-  match_threshold float default 0.7,
-  match_count int default 10,
-  filter jsonb default '{}'::jsonb
-)
-returns table (
-  id uuid,
-  content text,
-  metadata jsonb,
-  similarity float,
-  created_at timestamptz
-)
-language plpgsql
-as $$
-begin
-  return query
-  select
-    t.id,
-    t.content,
-    t.metadata,
-    1 - (t.embedding <=> query_embedding) as similarity,
-    t.created_at
-  from thoughts t
-  where 1 - (t.embedding <=> query_embedding) > match_threshold
-    and (filter = '{}'::jsonb or t.metadata @> filter)
-  order by t.embedding <=> query_embedding
-  limit match_count;
-end;
-$$;
-```
-
-</details>
-
-![2.4](https://img.shields.io/badge/2.4-Lock_Down_Security-555?style=for-the-badge&labelColor=F4511E)
-
-One more new query:
-
-<details>
-<summary>📋 <strong>SQL: Row Level Security</strong> (click to expand)</summary>
-
-```sql
-alter table thoughts enable row level security;
-
-create policy "Service role full access"
-  on thoughts
-  for all
-  using (auth.role() = 'service_role');
-```
-
-</details>
-
-![2.5](https://img.shields.io/badge/2.5-Grant_Table_Permissions-555?style=for-the-badge&labelColor=F4511E)
-
-New query → paste and Run:
-
-<details>
-<summary>📋 <strong>SQL: Grant service_role access</strong> (click to expand)</summary>
-
-```sql
--- Allow the service_role to read and write thoughts
-grant select, insert, update, delete on table public.thoughts to service_role;
-```
-
-</details>
-
-> [!IMPORTANT]
-> This step is required. Supabase no longer grants full table permissions to `service_role` by default on new projects. Without this, your MCP server will return "permission denied for table thoughts" when trying to capture or search.
-
-![2.6](https://img.shields.io/badge/2.6-Verify-555?style=for-the-badge&labelColor=F4511E)
-
-✅ **Done when:** Table Editor shows the `thoughts` table with columns: id, content, embedding, metadata, created_at, updated_at. Database → Functions shows `match_thoughts`.
-
----
-
-![Step 3](https://img.shields.io/badge/Step_3-Save_Your_Connection_Details-FB8C00?style=for-the-badge)
-
-In the left sidebar: **Settings** (gear icon) → **API Keys**.
-
-You'll land on the **"Publishable and secret API keys"** tab. Copy these into your credential tracker:
-
-- 🔖 **Project URL** — Shown at the top of the page under "Project URL"
-- 🔖 **Secret key** — Scroll down to the **"Secret keys"** section on the same page. You'll see a `default` key. Click the copy button to copy it. (You can also click **"+ New secret key"** to create a dedicated one named `open-brain` — this makes it easier to revoke later without affecting other services, but using the default is fine too.)
-
-> [!WARNING]
-> Treat the Secret key like a password. Anyone with it has full access to your data. The "Publishable key" at the top of the page is safe to expose publicly — you don't need it for this setup.
->
-> You may also see a **"Legacy anon, service_role API keys"** tab — those are the old-style JWT keys. You don't need them. Everything in this guide uses the new key format.
-
-✅ **Done when:** Your credential tracker has both **Project URL** and **Secret key** filled in.
-
----
-
-![Step 4](https://img.shields.io/badge/Step_4-Get_an_OpenRouter_API_Key-43A047?style=for-the-badge)
-
-OpenRouter is a universal AI API gateway — one account gives you access to every major model. We're using it for embeddings and lightweight LLM metadata extraction.
-
-Why OpenRouter instead of OpenAI directly? One account, one key, one billing relationship — and it future-proofs you for Claude, Gemini, or any other model later.
-
-1. Go to [openrouter.ai](https://openrouter.ai) and sign up
-2. Go to [openrouter.ai/keys](https://openrouter.ai/keys)
-3. Click **Create Key**, name it `open-brain`
-4. Copy the key into your credential tracker immediately
-5. Add $5 in credits under Credits (lasts months)
-
-✅ **Done when:** Your credential tracker has the **OpenRouter API key** filled in.
-
----
-
-![Step 5](https://img.shields.io/badge/Step_5-Create_an_Access_Key-00897B?style=for-the-badge)
-
-Your MCP server will be a public URL. The Supabase project ref in that URL is random enough that nobody will stumble onto it, but let's close the gap entirely. You'll generate a simple access key that the server checks on every request. Takes 30 seconds.
+- A **VPS** with Docker and Docker Compose installed (Hetzner CX31 recommended: 4 vCPU, 8 GB RAM, ~$7/month)
+- A **domain** pointed to your VPS (for automatic HTTPS via Caddy)
+- A **LiteLLM instance** (or any OpenAI-compatible API endpoint) for embeddings and chat — the default is `litellm.leadetic.com`
 
 > [!TIP]
-> **New to the terminal?** The "terminal" is the text-based command line on your computer. On Mac, open the app called **Terminal** (search for it in Spotlight). On Windows, open **PowerShell**. Everything below gets typed there, not in your browser.
+> **Never set up a VPS before?** Hetzner's cloud console walks you through it. Create an account, spin up a CX31 server with Ubuntu 24.04, and follow [Docker's official install guide](https://docs.docker.com/engine/install/ubuntu/). The whole process takes about 5 minutes. Point your domain's A record to the server's IP address, and you're ready to go.
 
-In your terminal, generate a random key:
-
-🟩 **Mac/Linux** — open Terminal and run:
-
-```bash
-openssl rand -hex 32
-```
-
-🟦 **Windows** — open PowerShell and run:
-
-```powershell
--join ((1..32) | ForEach-Object { '{0:x2}' -f (Get-Random -Maximum 256) })
-```
-
-Copy the output — it'll look something like `a3f8b2c1d4e5...` (64 characters). Paste it into your credential tracker under MCP Access Key. You'll set this as a Supabase secret in the next step (after installing the CLI).
-
-> [!WARNING]
-> Copy and paste the command for **your operating system only**. The Mac command won't work on Windows and vice versa.
-
-> [!IMPORTANT]
-> This is your **one access key for all of Open Brain** — core setup and every extension you add later. Save it somewhere permanent. Never generate a new one unless you want to replace it for ALL deployed functions.
-
-✅ **Done when:** Your credential tracker has the **MCP Access Key** filled in.
+Everything you need to track fits in one `.env` file — no spreadsheets, no dashboards, no third-party consoles.
 
 ---
 
-![Step 6](https://img.shields.io/badge/Step_6-Deploy_the_MCP_Server-1E88E5?style=for-the-badge)
+![Step 1](https://img.shields.io/badge/Step_1-Clone_and_Configure-E53935?style=for-the-badge)
 
-One Edge Function. Four MCP tools: semantic search, browse recent thoughts, stats, and capture. This gives any MCP-connected AI the ability to read and write to your brain.
+SSH into your VPS, clone the repo, and set up your environment variables. This is the only configuration step — everything else is automated.
 
-> [!WARNING]
-> **Tried this before and starting over?** If you have a `supabase/` folder in your home directory from a previous attempt, delete it first — it will silently hijack your setup. Run `rm -rf ~/supabase` (Mac/Linux) or `Remove-Item -Recurse ~\supabase` (Windows) to clean it out.
-
-**Pick your operating system and follow the steps inside:**
-
-<details>
-<summary>🟩 <strong>Step 6 — Mac / Linux</strong> (click to expand)</summary>
-
-![6.1](https://img.shields.io/badge/6.1-Create_a_Project_Folder-555?style=for-the-badge&labelColor=1E88E5)
-
-You need a folder on your computer for this project. The Supabase CLI will put your server files here, and you'll deploy from this folder.
-
-1. **Create a new folder** wherever you keep projects — your Documents folder, a Projects folder, wherever makes sense to you. Name it something like `open-brain`.
-
-2. **Copy the folder's path** — right-click the folder in Finder, hold the **Option** key, and click **Copy "open-brain" as Pathname**.
-
-3. **Navigate to it in your terminal** — open **Terminal** (search Spotlight) and paste the path after `cd`:
+![1.1](https://img.shields.io/badge/1.1-Clone_the_Repo-555?style=for-the-badge&labelColor=E53935)
 
 ```bash
-cd /paste/your/path/here
+ssh root@your-server-ip
+git clone https://github.com/NateBJones-Projects/OB1.git ob1
+cd ob1/deploy
 ```
 
-Confirm you're in the right place:
+![1.2](https://img.shields.io/badge/1.2-Create_Your_Environment_File-555?style=for-the-badge&labelColor=E53935)
 
 ```bash
-pwd
+cp .env.example .env
 ```
 
-This should print the path to your `open-brain` folder. If it shows your home directory (`/Users/yourname`) or anything else — you're in the wrong place. Re-do the `cd` command.
+![1.3](https://img.shields.io/badge/1.3-Generate_Secrets-555?style=for-the-badge&labelColor=E53935)
 
-> [!IMPORTANT]
-> From this point on, every terminal command should be run from this folder. If you close your terminal and come back later, `cd` into this folder again.
-
-![6.2](https://img.shields.io/badge/6.2-Install_the_Supabase_CLI-555?style=for-the-badge&labelColor=1E88E5)
-
-**With Homebrew:**
+Generate a strong database password and an admin API key:
 
 ```bash
-brew install supabase/tap/supabase
-```
-
-<details>
-<summary>🍺 <strong>Don't have Homebrew?</strong> (click to expand)</summary>
-
-Homebrew is the standard package manager for Mac. If you've never installed it, paste this into your terminal:
-
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-```
-
-Follow the prompts — it may ask for your Mac password. Once it finishes, close and reopen your terminal, then come back to the `brew install` command above.
-
-</details>
-
-**Without Homebrew:**
-
-```bash
-npm install -g supabase
-```
-
-Verify it worked:
-
-```bash
-supabase --version
-```
-
-![6.3](https://img.shields.io/badge/6.3-Log_In-555?style=for-the-badge&labelColor=1E88E5)
-
-This connects your local terminal to your Supabase account so the CLI can deploy to your project. It'll open your browser to authenticate — just follow the prompts and come back here when it says "You are now logged in."
-
-```bash
-supabase login
-```
-
-![6.4](https://img.shields.io/badge/6.4-Initialize_and_Link-555?style=for-the-badge&labelColor=1E88E5)
-
-Set up the Supabase project structure in your folder:
-
-```bash
-supabase init
-```
-
-You should now see a `supabase/` folder inside your project folder. Verify:
-
-```bash
-ls supabase/
+echo "POSTGRES_PASSWORD=$(openssl rand -hex 32)" >> .env
+echo "ADMIN_API_KEY=$(openssl rand -hex 32)" >> .env
 ```
 
 > [!CAUTION]
-> ❌ If `ls supabase/` shows "No such file or directory," you're not in your project folder. Run `pwd` to check, then `cd` to the right place and try `supabase init` again.
+> These are generated once and written directly into your `.env` file. If you need to see them later, just `cat .env`. But treat this file like a password vault — never commit it to version control or share it publicly.
 
-Link it to your Supabase project — replace `YOUR_PROJECT_REF` with the project ref from your credential tracker (Step 1):
+![1.4](https://img.shields.io/badge/1.4-Fill_In_the_Rest-555?style=for-the-badge&labelColor=E53935)
+
+Open `.env` in your editor (nano, vim, whatever you prefer) and fill in the remaining values:
 
 ```bash
-supabase link --project-ref YOUR_PROJECT_REF
+nano .env
 ```
 
-![6.5](https://img.shields.io/badge/6.5-Set_Your_Secrets-555?style=for-the-badge&labelColor=1E88E5)
+The file should look like this when you're done:
 
-Set your access key from Step 5:
+```ini
+# PostgreSQL
+POSTGRES_USER=ob1
+POSTGRES_PASSWORD=<already filled by Step 1.3>
+POSTGRES_DB=ob1
 
-```bash
-supabase secrets set MCP_ACCESS_KEY=your-access-key-from-step-5
-```
+# LiteLLM
+LITELLM_BASE_URL=https://litellm.leadetic.com/v1
+LITELLM_API_KEY=your-litellm-api-key
 
-Set your OpenRouter key from Step 4:
+# Models (optional overrides — defaults are fine)
+EMBEDDING_MODEL=text-embedding-3-small
+METADATA_MODEL=gpt-4o-mini
 
-```bash
-supabase secrets set OPENROUTER_API_KEY=your-openrouter-key-here
-```
+# Admin API
+ADMIN_API_KEY=<already filled by Step 1.3>
 
-> [!NOTE]
-> `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are automatically available inside Edge Functions — you don't need to set them.
-
-<!-- -->
-
-> [!CAUTION]
-> Make sure the access key you set here **exactly matches** what you saved in your credential tracker. If they don't match, you'll get 401 errors when connecting your AI.
-
-![6.6](https://img.shields.io/badge/6.6-Download_the_Server_Files-555?style=for-the-badge&labelColor=1E88E5)
-
-Three commands, run them one at a time in order:
-
-**1. Create the function folder:**
-
-```bash
-supabase functions new open-brain-mcp
-```
-
-**2. Download the server code:**
-
-```bash
-curl -o supabase/functions/open-brain-mcp/index.ts https://raw.githubusercontent.com/NateBJones-Projects/OB1/main/server/index.ts
-```
-
-**3. Download the dependencies file:**
-
-```bash
-curl -o supabase/functions/open-brain-mcp/deno.json https://raw.githubusercontent.com/NateBJones-Projects/OB1/main/server/deno.json
-```
-
-> [!WARNING]
-> ❌ **`No such file or directory`** on command 2 or 3 — you skipped command 1. Run it first, then retry.
-
-Verify the download worked — this should print the first line of the server code, **not** "Hello from Functions":
-
-```bash
-head -1 supabase/functions/open-brain-mcp/index.ts
-```
-
-> [!CAUTION]
-> ❌ If you see `console.log("Hello from Functions!")` — the download didn't overwrite the starter file. Delete the folder, re-create it, and retry the curl commands.
->
-> ✅ If you see `import "jsr:@supabase/functions-js/edge-runtime.d.ts";` — you're good.
-
-![6.7](https://img.shields.io/badge/6.7-Deploy-555?style=for-the-badge&labelColor=1E88E5)
-
-```bash
-supabase functions deploy open-brain-mcp --no-verify-jwt
+# Domain (for Caddy TLS — set to your actual domain)
+DOMAIN=brain.yourdomain.com
 ```
 
 > [!IMPORTANT]
-> Check the first line of the deploy output — it should say `Using workdir` followed by **your project folder path**. If it shows your home directory instead, your supabase project structure is in the wrong place. Go back to Step 6.1 and start over from a clean folder.
-
-Your MCP server is now live at:
-
-```text
-https://YOUR_PROJECT_REF.supabase.co/functions/v1/open-brain-mcp
-```
-
-Replace `YOUR_PROJECT_REF` with the project ref from your credential tracker (Step 1). Paste the full URL into your credential tracker as the MCP Server URL.
-
-Now build your **MCP Connection URL** by adding your access key to the end:
-
-```text
-https://YOUR_PROJECT_REF.supabase.co/functions/v1/open-brain-mcp?key=your-access-key-from-step-5
-```
-
-Paste this into your credential tracker as the MCP Connection URL. This is what you'll give to AI clients that support remote MCP — one URL, no extra config.
+> Set `DOMAIN` to the actual domain you pointed to this server. Caddy uses it to automatically provision a TLS certificate — no manual SSL setup required.
 
 > [!TIP]
-> If you've been filling in your credential tracker as you go, the **MCP Server URL** and **MCP Connection URL** are already auto-generated for you in the Step 6 section of the spreadsheet. Just verify they match.
+> You can leave `SLACK_SIGNING_SECRET` and `SLACK_BOT_TOKEN` empty for now. Step 6 covers Slack capture as an optional add-on.
 
-✅ **Done when:** You have both the **MCP Server URL** and **MCP Connection URL** in your credential tracker, and `supabase functions list` shows `open-brain-mcp` as `ACTIVE`.
-
-</details>
-
-<details>
-<summary>🟦 <strong>Step 6 — Windows</strong> (click to expand)</summary>
-
-![6.1](https://img.shields.io/badge/6.1-Create_a_Project_Folder-555?style=for-the-badge&labelColor=1E88E5)
-
-You need a folder on your computer for this project. The Supabase CLI will put your server files here, and you'll deploy from this folder.
-
-1. **Create a new folder** wherever you keep projects — your Documents folder, a Projects folder, wherever makes sense to you. Name it something like `open-brain`.
-
-2. **Copy the folder's path** — open the folder in File Explorer, click the address bar at the top, and copy the path that appears.
-
-3. **Navigate to it in your terminal** — open **PowerShell** and paste the path after `cd`:
-
-```powershell
-cd "C:\paste\your\path\here"
-```
-
-Confirm you're in the right place:
-
-```powershell
-Get-Location
-```
-
-This should print the path to your `open-brain` folder. If it shows your home directory (`C:\Users\yourname`) or anything else — you're in the wrong place. Re-do the `cd` command.
-
-> [!IMPORTANT]
-> From this point on, every terminal command should be run from this folder. If you close PowerShell and come back later, `cd` into this folder again.
-
-![6.2](https://img.shields.io/badge/6.2-Install_the_Supabase_CLI-555?style=for-the-badge&labelColor=1E88E5)
-
-If you don't have Scoop yet, install it first ([recommended by Supabase](https://supabase.com/docs/guides/local-development/cli/getting-started)):
-
-```powershell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
-```
-
-Then add the Supabase bucket:
-
-```powershell
-scoop bucket add supabase https://github.com/supabase/scoop-bucket.git
-```
-
-Then install Supabase:
-
-```powershell
-scoop install supabase
-```
-
-Verify it worked:
-
-```powershell
-supabase --version
-```
-
-![6.3](https://img.shields.io/badge/6.3-Log_In-555?style=for-the-badge&labelColor=1E88E5)
-
-This connects your local terminal to your Supabase account so the CLI can deploy to your project. It'll open your browser to authenticate — just follow the prompts and come back here when it says "You are now logged in."
-
-```powershell
-supabase login
-```
-
-![6.4](https://img.shields.io/badge/6.4-Initialize_and_Link-555?style=for-the-badge&labelColor=1E88E5)
-
-Set up the Supabase project structure in your folder:
-
-```powershell
-supabase init
-```
-
-You should now see a `supabase\` folder inside your project folder. Verify:
-
-```powershell
-dir supabase\
-```
-
-> [!CAUTION]
-> ❌ If `dir supabase\` shows an error, you're not in your project folder. Run `Get-Location` to check, then `cd` to the right place and try `supabase init` again.
-
-Link it to your Supabase project — replace `YOUR_PROJECT_REF` with the project ref from your credential tracker (Step 1):
-
-```powershell
-supabase link --project-ref YOUR_PROJECT_REF
-```
-
-![6.5](https://img.shields.io/badge/6.5-Set_Your_Secrets-555?style=for-the-badge&labelColor=1E88E5)
-
-Set your access key from Step 5:
-
-```powershell
-supabase secrets set MCP_ACCESS_KEY=your-access-key-from-step-5
-```
-
-Set your OpenRouter key from Step 4:
-
-```powershell
-supabase secrets set OPENROUTER_API_KEY=your-openrouter-key-here
-```
-
-> [!NOTE]
-> `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are automatically available inside Edge Functions — you don't need to set them.
-
-<!-- -->
-
-> [!CAUTION]
-> Make sure the access key you set here **exactly matches** what you saved in your credential tracker. If they don't match, you'll get 401 errors when connecting your AI.
-
-![6.6](https://img.shields.io/badge/6.6-Download_the_Server_Files-555?style=for-the-badge&labelColor=1E88E5)
-
-Three commands, run them one at a time in order:
-
-**1. Create the function folder:**
-
-```powershell
-supabase functions new open-brain-mcp
-```
-
-**2. Download the server code:**
-
-```powershell
-Invoke-WebRequest -Uri https://raw.githubusercontent.com/NateBJones-Projects/OB1/main/server/index.ts -OutFile supabase\functions\open-brain-mcp\index.ts
-```
-
-**3. Download the dependencies file:**
-
-```powershell
-Invoke-WebRequest -Uri https://raw.githubusercontent.com/NateBJones-Projects/OB1/main/server/deno.json -OutFile supabase\functions\open-brain-mcp\deno.json
-```
-
-> [!WARNING]
-> ❌ **`No such file or directory`** on command 2 or 3 — you skipped command 1. Run it first, then retry.
-
-Verify the download worked — this should print the first line of the server code, **not** "Hello from Functions":
-
-```powershell
-Get-Content supabase\functions\open-brain-mcp\index.ts -Head 1
-```
-
-> [!CAUTION]
-> ❌ If you see `console.log("Hello from Functions!")` — the download didn't overwrite the starter file. Delete the folder, re-create it, and retry the download commands.
->
-> ✅ If you see `import "jsr:@supabase/functions-js/edge-runtime.d.ts";` — you're good.
-
-![6.7](https://img.shields.io/badge/6.7-Deploy-555?style=for-the-badge&labelColor=1E88E5)
-
-```powershell
-supabase functions deploy open-brain-mcp --no-verify-jwt
-```
-
-> [!IMPORTANT]
-> Check the first line of the deploy output — it should say `Using workdir` followed by **your project folder path**. If it shows your home directory instead, your supabase project structure is in the wrong place. Go back to Step 6.1 and start over from a clean folder.
-
-Your MCP server is now live at:
-
-```text
-https://YOUR_PROJECT_REF.supabase.co/functions/v1/open-brain-mcp
-```
-
-Replace `YOUR_PROJECT_REF` with the project ref from your credential tracker (Step 1). Paste the full URL into your credential tracker as the MCP Server URL.
-
-Now build your **MCP Connection URL** by adding your access key to the end:
-
-```text
-https://YOUR_PROJECT_REF.supabase.co/functions/v1/open-brain-mcp?key=your-access-key-from-step-5
-```
-
-Paste this into your credential tracker as the MCP Connection URL. This is what you'll give to AI clients that support remote MCP — one URL, no extra config.
-
-> [!TIP]
-> If you've been filling in your credential tracker as you go, the **MCP Server URL** and **MCP Connection URL** are already auto-generated for you in the Step 6 section of the spreadsheet. Just verify they match.
-
-✅ **Done when:** You have both the **MCP Server URL** and **MCP Connection URL** in your credential tracker, and `supabase functions list` shows `open-brain-mcp` as `ACTIVE`.
-
-</details>
+✅ **Done when:** Your `.env` file has `POSTGRES_PASSWORD`, `ADMIN_API_KEY`, `LITELLM_BASE_URL`, `LITELLM_API_KEY`, and `DOMAIN` all filled in.
 
 ---
 
-![Step 7](https://img.shields.io/badge/Step_7-Connect_to_Your_AI-5C6BC0?style=for-the-badge)
+![Step 2](https://img.shields.io/badge/Step_2-Start_the_Services-F4511E?style=for-the-badge)
 
-You need your MCP Connection URL from the credential tracker — the one with `?key=` at the end.
+One command brings up your entire Open Brain stack — PostgreSQL with pgvector, the Node.js MCP server, and the Caddy reverse proxy. The database initializes itself automatically using the SQL scripts in `db/init/` — no manual SQL required.
+
+```bash
+docker compose up -d
+```
+
+Wait about 30 seconds for PostgreSQL to initialize, then verify everything is running:
+
+```bash
+docker compose ps
+```
+
+You should see three services — `postgres`, `app`, and `caddy` — all with status `Up` or `healthy`.
+
+Test the health endpoint:
+
+```bash
+curl http://localhost:3000/health
+```
+
+> [!CAUTION]
+> If `docker compose ps` shows a service as `restarting` or `exited`, check the logs:
+>
+> ```bash
+> docker compose logs postgres   # Database issues
+> docker compose logs app        # App startup issues
+> docker compose logs caddy      # TLS/domain issues
+> ```
+>
+> The most common issue is a missing or incorrect `DOMAIN` — Caddy will fail to start if it can't reach the domain or provision a certificate.
+
+Now test HTTPS from outside the server:
+
+```bash
+curl https://brain.yourdomain.com/health
+```
+
+Replace `brain.yourdomain.com` with your actual domain. You should get a healthy response.
+
+✅ **Done when:** `docker compose ps` shows all three services healthy, and `curl https://your-domain/health` returns a success response.
+
+---
+
+![Step 3](https://img.shields.io/badge/Step_3-Create_Your_First_Brain-FB8C00?style=for-the-badge)
+
+Open Brain uses **multi-brain architecture** — each user gets their own isolated PostgreSQL schema. No shared tables, no row-level security, no `user_id` columns. Your data is physically separated from everyone else's.
+
+Create your first brain using the Admin API:
+
+```bash
+curl -X POST https://brain.yourdomain.com/admin/brains \
+  -H "Authorization: Bearer $ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"slug":"your-name","display_name":"Your Name"}'
+```
+
+Replace `brain.yourdomain.com` with your domain and `your-name`/`Your Name` with whatever you'd like.
+
+> [!WARNING]
+> The response includes an **API key that is shown only once**. Copy it immediately and save it somewhere safe. This key is what you (and your AI clients) will use to access this specific brain.
+
+The response will look something like:
+
+```json
+{
+  "slug": "your-name",
+  "display_name": "Your Name",
+  "api_key": "ob1_a3f8b2c1d4e5..."
+}
+```
+
+Save that `api_key` value — you'll need it in the next step.
 
 > [!TIP]
-> Your credential tracker spreadsheet has a **Step 7** section with ready-to-copy values for each AI client — including the full terminal command for Claude Code. If you've been filling it in, just copy from there.
+> You can create as many brains as you want. One for work, one for personal, one for a side project — each is completely isolated. Just run the same `curl` command with a different `slug` and `display_name`.
+
+✅ **Done when:** You have your brain's API key saved somewhere safe.
+
+---
+
+![Step 4](https://img.shields.io/badge/Step_4-Connect_Your_AI-43A047?style=for-the-badge)
+
+Your MCP Connection URL is:
+
+```text
+https://brain.yourdomain.com/mcp?key=your-brain-api-key
+```
+
+Replace `brain.yourdomain.com` with your domain and `your-brain-api-key` with the key from Step 3.
 
 Pick your AI client below:
 
 <details>
-<summary>🤖 <strong>7.1 — Claude Desktop</strong></summary>
+<summary>🤖 <strong>4.1 — Claude Desktop</strong></summary>
 
 > [!NOTE]
 > No JSON config files. No Node.js. No terminal. This is the simplest connection method.
@@ -637,7 +203,7 @@ Pick your AI client below:
 1. Open Claude Desktop → **Settings** → **Connectors**
 2. Click **Add custom connector**
 3. Name: `Open Brain`
-4. Remote MCP server URL: paste your **MCP Connection URL** (the one ending in `?key=your-access-key`)
+4. Remote MCP server URL: paste your **MCP Connection URL** (the one ending in `?key=your-brain-api-key`)
 5. Click **Add**
 
 That's it. Start a new conversation, and Claude will have access to your Open Brain tools. You can enable or disable it per conversation via the "+" button → Connectors.
@@ -645,7 +211,7 @@ That's it. Start a new conversation, and Claude will have access to your Open Br
 </details>
 
 <details>
-<summary>🤖 <strong>7.2 — ChatGPT</strong></summary>
+<summary>🤖 <strong>4.2 — ChatGPT</strong></summary>
 
 > [!WARNING]
 > Requires a paid ChatGPT plan (Plus, Pro, Business, Enterprise, or Edu). Works on the web at [chatgpt.com](https://chatgpt.com) only — not available on mobile.
@@ -664,8 +230,8 @@ That's it. Start a new conversation, and Claude will have access to your Open Br
 1. In Settings → **Apps & Connectors**, click **Create**
 2. Name: `Open Brain`
 3. Description: `Personal knowledge base with semantic search` (or whatever you want — this is just for your reference)
-4. MCP endpoint URL: paste your **MCP Connection URL** (the one ending in `?key=your-access-key`)
-5. Authentication: select **No Authentication** (your access key is embedded in the URL)
+4. MCP endpoint URL: paste your **MCP Connection URL** (the one ending in `?key=your-brain-api-key`)
+5. Authentication: select **No Authentication** (your brain key is embedded in the URL)
 6. Click **Create**
 
 > [!TIP]
@@ -674,24 +240,25 @@ That's it. Start a new conversation, and Claude will have access to your Open Br
 </details>
 
 <details>
-<summary>🤖 <strong>7.3 — Claude Code</strong></summary>
+<summary>🤖 <strong>4.3 — Claude Code</strong></summary>
 
 One command:
 
 ```bash
-claude mcp add --transport http open-brain \
-  https://YOUR_PROJECT_REF.supabase.co/functions/v1/open-brain-mcp \
-  --header "x-brain-key: your-access-key-from-step-5"
+claude mcp add open-brain --transport streamable-http \
+  https://brain.yourdomain.com/mcp?key=your-brain-api-key
 ```
+
+Replace the URL with your actual domain and brain key.
 
 </details>
 
 <details>
-<summary>🤖 <strong>7.4 — Other Clients (Cursor, VS Code Copilot, Windsurf)</strong></summary>
+<summary>🤖 <strong>4.4 — Other Clients (Cursor, VS Code Copilot, Windsurf)</strong></summary>
 
-Every MCP client handles remote servers slightly differently. The server accepts your access key two ways — pick whichever your client supports:
+Every MCP client handles remote servers slightly differently. The server accepts your brain key via the URL query parameter — pick whichever approach your client supports:
 
-**Option A: URL with key (easiest).** If your client has a field for a remote MCP server URL, paste the full MCP Connection URL including `?key=your-access-key`. This works for any client that supports remote MCP without requiring headers.
+**Option A: URL with key (easiest).** If your client has a field for a remote MCP server URL, paste the full MCP Connection URL including `?key=your-brain-api-key`. This works for any client that supports remote MCP without requiring headers.
 
 **Option B: mcp-remote bridge.** If your client only supports local stdio servers (configured via a JSON config file), use `mcp-remote` to bridge to the remote server. This requires Node.js installed.
 
@@ -702,20 +269,15 @@ Every MCP client handles remote servers slightly differently. The server accepts
       "command": "npx",
       "args": [
         "mcp-remote",
-        "https://YOUR_PROJECT_REF.supabase.co/functions/v1/open-brain-mcp",
-        "--header",
-        "x-brain-key:${BRAIN_KEY}"
+        "https://brain.yourdomain.com/mcp?key=${BRAIN_KEY}"
       ],
       "env": {
-        "BRAIN_KEY": "your-access-key-from-step-5"
+        "BRAIN_KEY": "your-brain-api-key"
       }
     }
   }
 }
 ```
-
-> [!NOTE]
-> No space after the colon in `x-brain-key:${BRAIN_KEY}`. Some clients have a bug where spaces inside args get mangled.
 
 </details>
 
@@ -723,7 +285,7 @@ Every MCP client handles remote servers slightly differently. The server accepts
 
 ---
 
-![Step 8](https://img.shields.io/badge/Step_8-Use_It-8E24AA?style=for-the-badge)
+![Step 5](https://img.shields.io/badge/Step_5-Test_It-00897B?style=for-the-badge)
 
 Ask your AI naturally. It picks the right tool automatically:
 
@@ -744,7 +306,7 @@ Start by capturing a test thought. In your connected AI, say:
 Remember this: Sarah mentioned she's thinking about leaving her job to start a consulting business
 ```
 
-Wait a few seconds. Your AI should confirm the capture and show you the extracted metadata (type, topics, people, action items). Then open Supabase dashboard → Table Editor → thoughts. You should see one row with your message, an embedding, and metadata.
+Wait a few seconds. Your AI should confirm the capture and show you the extracted metadata (type, topics, people, action items).
 
 Now try searching:
 
@@ -761,11 +323,107 @@ Your AI should retrieve the thought you just saved.
 
 ---
 
-<details>
-<summary>❓ <strong>Troubleshooting</strong></summary>
+![Step 6](https://img.shields.io/badge/Step_6-Set_Up_Slack_Capture_(Optional)-1E88E5?style=for-the-badge)
+
+Want to capture thoughts straight from Slack? The Node.js app includes a built-in Slack webhook handler — no extra services needed.
+
+![6.1](https://img.shields.io/badge/6.1-Create_a_Slack_App-555?style=for-the-badge&labelColor=1E88E5)
+
+1. Go to [api.slack.com/apps](https://api.slack.com/apps) and click **Create New App** → **From scratch**
+2. Name it `Open Brain` and pick your workspace
+3. Under **OAuth & Permissions**, add these Bot Token Scopes:
+   - `channels:history` — read messages in public channels
+   - `chat:write` — post confirmation replies
+4. Click **Install to Workspace** and authorize
+5. Copy the **Bot User OAuth Token** (starts with `xoxb-`)
+
+![6.2](https://img.shields.io/badge/6.2-Get_the_Signing_Secret-555?style=for-the-badge&labelColor=1E88E5)
+
+Under **Basic Information** → **App Credentials**, copy the **Signing Secret**.
+
+![6.3](https://img.shields.io/badge/6.3-Add_Secrets_to_Your_Environment-555?style=for-the-badge&labelColor=1E88E5)
+
+SSH into your VPS and edit your `.env` file:
+
+```bash
+cd ob1/deploy
+nano .env
+```
+
+Fill in the Slack values:
+
+```ini
+SLACK_SIGNING_SECRET=your-signing-secret
+SLACK_BOT_TOKEN=xoxb-your-bot-token
+```
+
+Restart the app to pick up the new variables:
+
+```bash
+docker compose up -d app
+```
+
+![6.4](https://img.shields.io/badge/6.4-Map_a_Channel_to_a_Brain-555?style=for-the-badge&labelColor=1E88E5)
+
+Tell Open Brain which Slack channel should feed into which brain:
+
+```bash
+curl -X POST https://brain.yourdomain.com/admin/slack/channels \
+  -H "Authorization: Bearer $ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"channel_id":"C0123ABCDEF","brain_slug":"your-name"}'
+```
+
+Replace `C0123ABCDEF` with your Slack channel ID (right-click a channel in Slack → **View channel details** → copy the ID at the bottom).
+
+![6.5](https://img.shields.io/badge/6.5-Configure_the_Event_Subscription-555?style=for-the-badge&labelColor=1E88E5)
+
+Back in the Slack app settings:
+
+1. Go to **Event Subscriptions** → toggle **Enable Events** ON
+2. Set the Request URL to: `https://brain.yourdomain.com/slack/events`
+3. Slack will send a verification challenge — the app handles it automatically
+4. Under **Subscribe to bot events**, add `message.channels`
+5. Click **Save Changes**
 
 > [!TIP]
-> If the specific suggestions below don't solve your issue, the Supabase AI assistant (chat icon, bottom-right of your dashboard) can help diagnose problems with anything Supabase-related. Paste the error message and tell it what step you're on.
+> Messages posted in the mapped channel will be automatically captured as thoughts in the linked brain — with embeddings and metadata, just like thoughts captured via MCP.
+
+✅ **Done when:** You can post a message in your Slack channel and see it appear as a thought in your brain.
+
+---
+
+![Step 7](https://img.shields.io/badge/Step_7-Install_Extensions_(Optional)-5C6BC0?style=for-the-badge)
+
+Extensions add specialized schemas to your brain — structured tables for specific use cases like household management, meal planning, or job hunting. They're installed per-brain using the Admin API.
+
+Install an extension:
+
+```bash
+curl -X POST https://brain.yourdomain.com/admin/brains/your-name/extensions/household \
+  -H "Authorization: Bearer $ADMIN_API_KEY"
+```
+
+Available extensions:
+
+| Extension | What It Adds |
+| --------- | ------------ |
+| `household` | Household items, inventory, and maintenance tracking |
+| `maintenance` | Home/vehicle maintenance schedules and history |
+| `calendar` | Events, reminders, and scheduling |
+| `meals` | Meal planning, recipes, and grocery lists |
+| `crm` | Contact management and relationship tracking |
+| `jobhunt` | Job applications, interviews, and follow-ups |
+
+> [!TIP]
+> You can install multiple extensions on the same brain. Each one adds its own tables to the brain's schema — they don't interfere with each other or with the core thoughts table.
+
+✅ **Done when:** The extension returns a success response and your AI can access the new tools.
+
+---
+
+<details>
+<summary>❓ <strong>Troubleshooting</strong></summary>
 
 **❌ Claude Desktop tools don't appear**
 
@@ -775,49 +433,55 @@ Make sure you added the connector in Settings → Connectors (not by editing the
 
 First, confirm Developer Mode is enabled (Settings → Apps & Connectors → Advanced settings). Without it, ChatGPT only exposes limited MCP functionality that won't cover Open Brain's full toolset. Next, check that the connector is active for your current conversation — look for it in the tools/apps panel. If it's connected but ChatGPT ignores it, be direct: "Use the Open Brain search_thoughts tool to search for [topic]." ChatGPT often needs explicit tool references the first few times before it starts picking them up automatically.
 
-**❌ "Permission denied for table thoughts"**
-
-Your `service_role` doesn't have table-level permissions. This happens on newer Supabase projects where CRUD grants are no longer automatic. Go back to Step 2.5 and run the `GRANT` SQL, then retry.
-
 **❌ Getting 401 errors**
 
-The access key doesn't match what's stored in Supabase secrets. Double-check that the `?key=` value in your URL matches your MCP Access Key exactly. If you're using the header approach (Claude Code or mcp-remote), the header must be `x-brain-key` (lowercase, with the dash).
+The brain key doesn't match what's in the database. Double-check that the `?key=` value in your URL matches the API key returned when you created the brain in Step 3. Brain keys are case-sensitive.
+
+**❌ `docker compose up` fails with port conflicts**
+
+Something else is already using port 80, 443, or 5432 on your VPS. Check with `ss -tlnp` and stop the conflicting service, or adjust the port mappings in `docker-compose.yml`.
+
+**❌ Caddy can't get a TLS certificate**
+
+Make sure your domain's A record points to the VPS IP address and has had time to propagate (usually a few minutes, sometimes up to an hour). Check Caddy's logs with `docker compose logs caddy`. The most common issue is the domain not resolving to the server yet.
 
 **❌ Search returns no results**
 
-Make sure you've captured at least one thought first (see Step 8). Try asking the AI to "search with threshold 0.3" for a wider net. If that still returns nothing, check the Edge Function logs in the Supabase dashboard for errors.
-
-**❌ Tools work but responses are slow**
-
-First search on a cold function takes a few seconds — the Edge Function is waking up. Subsequent calls are faster. If it's consistently slow, check your Supabase project region — pick the one closest to you.
+Make sure you've captured at least one thought first (see Step 5). Try asking the AI to "search with threshold 0.3" for a wider net. If that still returns nothing, check the app logs with `docker compose logs app` for errors.
 
 **❌ Capture tool saves but metadata is wrong**
 
 The metadata extraction is best-effort — the LLM is making its best guess with limited context. The embedding is what powers semantic search, and that works regardless of how the metadata gets classified. If you consistently want a specific classification, use the capture templates from the prompt kit to give the LLM clearer signals.
+
+**❌ Health check passes locally but not via HTTPS**
+
+Run `curl http://localhost:3000/health` on the VPS to confirm the app itself is healthy. If that works but `https://your-domain/health` doesn't, the issue is Caddy or DNS. Check `docker compose logs caddy` and make sure your `DOMAIN` in `.env` matches your actual domain exactly.
 
 </details>
 
 <details>
 <summary>🔍 <strong>How It Works Under the Hood</strong></summary>
 
-**When you capture from any AI via MCP:** your AI client sends the text to the `capture_thought` tool → the MCP server generates an embedding (1536-dimensional vector of meaning) AND extracts metadata via LLM in parallel → both get stored as a single row in Supabase → confirmation returned to your AI.
+**When you capture from any AI via MCP:** your AI client sends the text to the `capture_thought` tool → the Node.js app generates an embedding (1536-dimensional vector of meaning) AND extracts metadata via LiteLLM in parallel → both get stored in your brain's isolated PostgreSQL schema → confirmation returned to your AI.
 
-**When you search your brain:** your AI client sends the query to the MCP Edge Function → the function generates an embedding of your question → Supabase matches it against every stored thought by vector similarity → results come back ranked by meaning, not keywords.
+**When you search your brain:** your AI client sends the query to the MCP server → the app generates an embedding of your question → PostgreSQL (pgvector) matches it against every stored thought by vector similarity → results come back ranked by meaning, not keywords.
 
 The embedding is what makes retrieval powerful. "Sarah's thinking about leaving" and "What did I note about career changes?" match semantically even though they share zero keywords. The metadata is a bonus layer for structured filtering on top.
 
-### Swapping Models Later
+**Schema-per-user isolation:** Each brain gets its own PostgreSQL schema — a completely separate namespace with its own tables, indexes, and functions. There are no shared tables, no `user_id` columns, and no row-level security policies to manage. It's the simplest, strongest form of multi-tenant data isolation.
 
-Because you're using OpenRouter, you can swap models by editing the model strings in the Edge Function code and redeploying. Browse available models at [openrouter.ai/models](https://openrouter.ai/models). Just make sure embedding dimensions match (1536 for the current setup).
+### Swapping Models
+
+Because you're using LiteLLM (or any OpenAI-compatible endpoint), you can swap models by changing the `EMBEDDING_MODEL` and `METADATA_MODEL` values in your `.env` file and restarting the app. Just make sure embedding dimensions match (1536 for the current setup).
 
 </details>
 
 <details>
-<summary>➕ <strong>Optional: Add Capture Sources</strong></summary>
+<summary>➕ <strong>Optional: Add More Capture Sources</strong></summary>
 
 Your MCP server handles both reading and writing. But if you want a quick-capture channel outside your AI tools:
 
-- **[Slack Capture](../integrations/slack-capture/)** — Type thoughts in a Slack channel, automatically embedded and stored
+- **Slack Capture** (Step 6 above) — Type thoughts in a Slack channel, automatically embedded and stored
 - More integrations in [`/integrations`](../integrations/)
 
 </details>
@@ -825,13 +489,9 @@ Your MCP server handles both reading and writing. But if you want a quick-captur
 <details>
 <summary>🎉 <strong>What You Just Built — And What You Can Build Next</strong></summary>
 
-You just used two free services, some copy-pasted code, and a built-in AI assistant to build a personal knowledge system with semantic search, an open write protocol, and an open read protocol. No CS degree. No local servers. No monthly SaaS fee.
+You just deployed a self-hosted, multi-brain knowledge system with semantic search, schema-level data isolation, automatic HTTPS, and an open MCP protocol — in about 15 minutes. No third-party SaaS dependencies. No monthly platform fees. Your data lives on your own server.
 
-Here's the thing worth noticing: that Supabase AI assistant that helped you through the setup? It has access to all of Supabase's documentation, understands your project structure, and can help you build on top of what you've created. That's not a one-time trick for getting unstuck during setup. That's a permanent building partner.
-
-Want to add a new capture source? Ask it how to create another Edge Function. Want to add a new field to your thoughts table? Ask it to help you write the SQL migration. Want to understand how to add authentication so you can share your brain with a teammate? It knows the docs better than you ever will.
-
-You just built AI infrastructure using AI. That pattern doesn't stop here.
+Here's the thing worth noticing: because this is a standard Docker Compose stack with a PostgreSQL database, you can extend it with any tool that speaks SQL or HTTP. Want to add a new capture source? Write a webhook handler. Want to query your brain from a script? Hit the MCP endpoint. Want to back up your data? `pg_dump` the database. The whole system is transparent and hackable.
 
 Got stuck or want to share what you've built? Join the [Open Brain Discord](https://discord.gg/Cgh9WJEkeG) — there's a `#help` channel for troubleshooting and a `#show-and-tell` channel for showing off.
 

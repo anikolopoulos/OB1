@@ -1,0 +1,17 @@
+{$DOMAIN} {
+    handle /mcp* {
+        reverse_proxy app:3000
+    }
+
+    handle /admin/* {
+        reverse_proxy app:3000
+    }
+
+    handle /slack/* {
+        reverse_proxy app:3000
+    }
+
+    handle /health {
+        reverse_proxy app:3000
+    }
+}

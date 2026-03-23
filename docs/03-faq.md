@@ -6,17 +6,60 @@
 
 This is the single most common issue. The tell is right in the pattern: Claude Code can send custom headers, but Claude Desktop, Claude Web, and ChatGPT can't.
 
-The fix: use the MCP Connection URL with the key embedded as a query parameter (`?key=your-access-key`), not as a custom header. Your URL should look like:
+The fix: use the MCP Connection URL with the key embedded as a query parameter (`?key=your-brain-key`), not as a custom header. Your URL should look like:
 
 ```text
-https://your-project-ref.supabase.co/functions/v1/open-brain-mcp?key=your-access-key
+https://<your-domain>/mcp?key=<your-brain-key>
 ```
 
 When adding the connector in Claude Desktop (Settings → Connectors) or ChatGPT (Settings → Apps & Connectors), paste that full URL. Set authentication to "none" — the key is already in the URL.
 
-### "ChatGPT disabled my memory when I added the Open Brain"
+### "How do I create a new brain?"
 
-This is an OpenAI requirement, not a bug. Enabling Developer Mode (required to add custom MCP connectors) disables ChatGPT's built-in Memory feature. Your Open Brain replaces that functionality — and unlike ChatGPT's memory, it works across every AI client you connect, not just one.
+Use the Admin API. Send a POST request to your server's admin endpoint:
+
+```bash
+curl -X POST https://<your-domain>/admin/brains \
+  -H "Authorization: Bearer <your-admin-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "My Brain", "slug": "my-brain"}'
+```
+
+The server creates the schema, tables, vector indexes, and access key automatically. Check `docs/01-getting-started.md` for the full Admin API reference.
+
+### "How do I see what's in my database?"
+
+Connect to PostgreSQL directly using `psql` or any DB client (TablePlus, DBeaver, pgAdmin, etc.). From the command line:
+
+```bash
+docker compose exec postgres psql -U ob1 -c "SET search_path TO brain_<slug>; SELECT * FROM thoughts ORDER BY created_at DESC LIMIT 10;"
+```
+
+Replace `<slug>` with your brain's slug. Each brain lives in its own PostgreSQL schema, so you set the `search_path` first.
+
+### "How do I check the logs?"
+
+```bash
+docker compose logs -f app
+```
+
+This streams live logs from the application container. Drop the `-f` flag if you just want a snapshot instead of a live tail. You can also filter to a specific timeframe:
+
+```bash
+docker compose logs --since 5m app
+```
+
+### "How do I update the server?"
+
+```bash
+git pull && docker compose build app && docker compose up -d
+```
+
+This pulls the latest code, rebuilds the app container, and restarts it. Your database and data are unaffected — they live in the PostgreSQL volume.
+
+### "Can multiple people use the same instance?"
+
+Yes — each person gets their own brain via the Admin API. Every brain has its own PostgreSQL schema, its own access key, and its own MCP endpoint. One server, many brains, fully isolated.
 
 ### "How do I migrate my ChatGPT memories/conversations into the Open Brain?"
 
@@ -30,21 +73,19 @@ Fair warning: if you've been a heavy ChatGPT user, the export is A LOT of data. 
 
 ChatGPT is less intuitive than Claude at picking the right MCP tool on its own. Be explicit the first few times: "Use the Open Brain search_thoughts tool to find my notes about [topic]." After it gets the pattern once or twice in a conversation, it usually starts picking them up automatically.
 
-### "I'm stuck and Claude is rewriting my edge function code to fix the connection"
+### "I'm stuck and Claude is rewriting my server code to fix the connection"
 
-Pause. The problems are almost never in the code. They're in the configuration: a secret that doesn't match, a URL that's missing the key, a step that got skipped. Letting an AI rewrite working code when the issue is a mismatched environment variable will make things harder to debug, not easier.
+Pause. The problems are almost never in the code. They're in the configuration: an environment variable that doesn't match, a URL that's missing the key, a step that got skipped. Letting an AI rewrite working code when the issue is a mismatched `.env` value will make things harder to debug, not easier.
 
-Check your Supabase dashboard → Edge Functions → open-brain-mcp → Logs first. That'll tell you what's actually happening.
+Check with `docker compose logs app` first. That'll tell you what's actually happening.
 
 ### "Search isn't working but I can capture recent thoughts"
 
-Good news — that means your database, edge functions, and MCP connection are all fine. The issue is isolated to the search function.
+Good news — that means your database, server, and MCP connection are all fine. The issue is isolated to the search function.
 
-Most likely culprits: the vector extension isn't enabled (run `create extension if not exists vector;` in the SQL editor), the embedding generation is failing silently, or the search function deployed with an error.
+Most likely culprits: the vector extension isn't enabled (it should be auto-enabled by the Docker init scripts, but you can verify by connecting to PostgreSQL and running `SELECT * FROM pg_extension WHERE extname = 'vector';`), the embedding generation is failing silently, or LiteLLM can't reach your configured embedding model.
 
-Quickest diagnosis: Supabase dashboard → Edge Functions → click on the search function → check the Logs tab.
-
-And don't forget the Supabase AI assistant covered in the [setup guide](01-getting-started.md). Paste your edge function code and the error logs right into it — it's surprisingly good at diagnosing Supabase-specific issues since it has direct context on their APIs.
+Quickest diagnosis: `docker compose logs app` — filter for errors around the search or embedding endpoints.
 
 ---
 
@@ -78,17 +119,17 @@ In Obsidian, your notes are documents. You write them, organize them, revise the
 
 The Open Brain isn't that. It's a memory layer for your AI. You put thoughts in, your AI pulls the right ones out when they're relevant. You don't need to organize them, file them, or maintain them — the vector search handles retrieval by meaning.
 
-If you need to fix a typo or delete something, Supabase's Table Editor works (dashboard → Table Editor → thoughts). But if you're finding yourself wanting to regularly browse and edit your content, that's Obsidian's workflow, not this one. They solve different problems.
+If you need to fix a typo or delete something, you can connect to PostgreSQL directly using `psql` or a DB client like TablePlus or DBeaver. But if you're finding yourself wanting to regularly browse and edit your content, that's Obsidian's workflow, not this one. They solve different problems.
 
-That said — the system is yours to extend. The MCP server currently has a capture tool for writing new thoughts. If you want your AI to be able to revise what's stored, that's one more tool added to the server. You can describe what you want to the Supabase AI assistant and it can help you build it. You built the system, you can extend it.
+That said — the system is yours to extend. The MCP server currently has a capture tool for writing new thoughts. If you want your AI to be able to revise what's stored, that's one more tool added to the server. You built the system, you can extend it.
 
 ### "I want the visual editing experience — headings, bullets, drag stuff around, everything visible at once"
 
-That's a fair ask, and you're right — that doesn't exist in the Open Brain right now. The Table Editor in Supabase is functional but it's a database view, not a writing environment.
+That's a fair ask, and you're right — that doesn't exist in the Open Brain right now. Connecting to the database directly is functional but it's a database view, not a writing environment.
 
 Here's how to think about it: the Open Brain is the backend. It's where the data lives, where the vectors live, where your AI connects. Obsidian is a frontend. There's nothing stopping you from having both — use the Open Brain as your storage and retrieval layer, and build (or eventually connect) a nicer interface on top of it.
 
-That could be as simple as a lightweight web app that reads from your Supabase tables and lets you browse, edit, and organize visually. It's a real project — not a copy-paste afternoon — but it's totally within reach, especially if you use an AI to help you build it. The database and API are already there. You'd just be putting a face on it.
+That could be as simple as a lightweight web app that reads from your PostgreSQL tables and lets you browse, edit, and organize visually. It's a real project — not a copy-paste afternoon — but it's totally within reach, especially if you use an AI to help you build it. The database and API are already there. You'd just be putting a face on it.
 
 For now, if that visual editing experience is how you think and work best, keep using Obsidian (or Workflowy) for that. Use the Open Brain for what it's good at: giving your AI access to everything you've captured. They can coexist — just don't expect one to be the other.
 
@@ -126,7 +167,7 @@ For structured data like health/sleep stats — one entry per night, not one per
 
 Same principle everywhere: calendar events — one per event. Emails — one per email or per thread. Tasks — one per task.
 
-Don't worry about row count. Postgres handles millions of rows, pgvector's HNSW index keeps search fast regardless of scale, and at $0.02 per million tokens the embedding costs are basically free even at scale.
+Don't worry about row count. Postgres handles millions of rows, pgvector's HNSW index keeps search fast regardless of scale, and embedding costs are minimal even at scale.
 
 The key thing to get right is metadata. Every source type should tag itself (`source: "garmin"`, `source: "obsidian"`, `source: "calendar"`) so you can filter retrieval by context. "What's in my calendar this week" shouldn't have to wade through your sleep data.
 
@@ -134,15 +175,13 @@ The key thing to get right is metadata. Every source type should tag itself (`so
 
 Here's how to diagnose it yourself:
 
-First, check your row count. Supabase dashboard → Table Editor → thoughts. If you're under 20-30 entries, the system just doesn't have enough data points for semantic search to work well. It's not broken, it's sparse. The more you put in, the better retrieval gets.
+First, check your row count. Connect to PostgreSQL directly and query your thoughts table. If you're under 20-30 entries, the system just doesn't have enough data points for semantic search to work well. It's not broken, it's sparse. The more you put in, the better retrieval gets.
 
 Second, test search directly. Ask your AI to search for something you KNOW is in there — use words that are close to what you actually typed when you captured it. If that works but vaguer queries don't, the system is fine, it just needs more content for the semantic matching to have enough to work with.
 
-Third, check your edge function logs. Supabase dashboard → Edge Functions → open-brain-mcp → Logs. If search is erroring out silently, you'll see it there.
+Third, check your application logs: `docker compose logs app`. If search is erroring out silently, you'll see it there.
 
 Fourth, if search finds a thought when listing recent entries but NOT through semantic search, that's a useful clue. It means the data is there and retrievable, but the embedding or similarity matching isn't connecting your query to that entry. This usually improves as you add more content — semantic search gets sharper with more data points to compare against.
-
-And remember — the Supabase AI assistant in your dashboard can help you debug this stuff. Paste in what you're seeing and it'll walk you through it.
 
 ---
 
@@ -150,9 +189,9 @@ And remember — the Supabase AI assistant in your dashboard can help you debug 
 
 ### "What did I actually accomplish by setting this up?"
 
-Think about what you just did. You stood up a PostgreSQL database in the cloud. You wrote database migrations. You deployed serverless edge functions. You configured API secrets and environment variables. You didn't just connect to an MCP server — you built one from scratch and deployed it to production.
+Think about what you just did. You stood up a self-hosted server with PostgreSQL, pgvector, and LiteLLM running in Docker. You configured an AI gateway, set up vector search, and deployed an MCP server that any AI client can connect to. You own the whole stack — the data, the infrastructure, the code.
 
-A few years ago that's a junior backend engineer's first month. If you did it in a few hours with zero prior experience, the guide helped — but the guide doesn't click the buttons for you. That was you.
+A few years ago that's a junior backend engineer's first month. If you did it in an afternoon with zero prior experience, the guide helped — but the guide doesn't click the buttons for you. That was you.
 
 ### "I already customized it based on my own workflow needs"
 
@@ -170,16 +209,16 @@ This is a precise description of what vector retrieval does differently from fil
 
 If you've built custom agents on top of the Open Brain (or alongside it), rate limit issues with your AI provider are outside the scope of this guide. The Open Brain is a single MCP server, not a multi-agent system.
 
-That said: check your usage tier in your provider's console, make sure your agents aren't all using Opus/Sonnet for tasks that Haiku could handle, and stagger requests rather than firing everything simultaneously.
+That said: check your usage tier in your provider's console, make sure your agents aren't all using Opus/Sonnet for tasks that Haiku could handle, and stagger requests rather than firing everything simultaneously. If you're routing through LiteLLM, check your LiteLLM rate limit settings and model configuration as well.
 
 ---
 
 ## Quick Reference: Before You Ask for Help
 
 1. **Did you follow the guide step by step?** Most issues trace back to a skipped or modified step.
-2. **Check Edge Function logs.** Supabase dashboard → Edge Functions → your function → Logs. This tells you what's actually breaking.
-3. **Is your URL format correct?** Should be: `https://your-ref.supabase.co/functions/v1/open-brain-mcp?key=your-key`
-4. **Use the Supabase AI assistant.** Paste your error and it can help diagnose Supabase-specific issues.
+2. **Check the application logs.** `docker compose logs app` — this tells you what's actually breaking.
+3. **Is your URL format correct?** Should be: `https://<your-domain>/mcp?key=<your-brain-key>`
+4. **Check your `.env` file.** Most configuration problems come from missing or incorrect environment variables.
 5. **Don't let AI rewrite your server code** unless you understand what it's changing. Configuration problems need configuration fixes.
 
 ---
