@@ -26,31 +26,28 @@ A database and MCP server for storing and retrieving household facts — paint c
 - Simple MCP tool creation
 - JSONB patterns for flexible metadata storage
 - Text search with ILIKE patterns
-- Building a Supabase-backed MCP server
+- Building an MCP server backed by self-hosted PostgreSQL
 
 ## Prerequisites
 
 - Working Open Brain setup
-- Supabase project configured
-- Supabase CLI installed and linked to your project
+- Docker Compose stack running
 
 ## Credential Tracker
 
 You'll reference these values during setup. Copy this block into a text editor and fill it in as you go.
 
-> **Already have your Supabase credentials from the [Setup Guide](../../docs/01-getting-started.md)?** You just need the same Project URL and Secret key.
+> **Already have your credentials from the [Setup Guide](../../docs/01-getting-started.md)?** You just need the same MCP Access Key and domain.
 
 ```text
 HOUSEHOLD KNOWLEDGE -- CREDENTIAL TRACKER
 --------------------------------------
 
-SUPABASE (from your Open Brain setup)
-  Project URL:           ____________
-  Secret key:            ____________
-  Project ref:           ____________
+OPEN BRAIN (from your Docker setup)
+  Domain / IP:           ____________
+  DATABASE_URL:          ____________  (auto-configured in Docker)
 
 GENERATED DURING SETUP
-  Default User ID:       ____________
   MCP Access Key:        ____________  (same key for all extensions)
   MCP Server URL:        ____________
   MCP Connection URL:    ____________
@@ -62,40 +59,21 @@ GENERATED DURING SETUP
 
 ### 1. Set Up the Database Schema
 
-Run the SQL in `schema.sql` in your Supabase SQL Editor:
+Run the SQL in `schema.sql` against your database:
 
 ```bash
-# Navigate to your Supabase project SQL editor
-# https://supabase.com/dashboard/project/YOUR_PROJECT_ID/sql/new
+docker compose exec postgres psql -U postgres -d open_brain -f /path/to/schema.sql
 ```
 
-Copy and paste the contents of `schema.sql` and click Run.
+Or copy and paste the contents of `schema.sql` into `psql` or your database client.
 
-### 2. Generate Your User ID
+### 2. Deploy the MCP Server
 
-The extension needs a user ID to scope your data. Generate a UUID and save it in your credential tracker:
+Extension tools are registered in the Node.js MCP server. If you're adding this extension's tools, place them in `deploy/app/src/mcp/tools/` and restart:
 
 ```bash
-# macOS / Linux
-uuidgen | tr '[:upper:]' '[:lower:]'
-
-# Or use any UUID generator — the value just needs to be unique to you
+docker compose up -d
 ```
-
-Set it as an environment variable for your Edge Function:
-
-```bash
-supabase secrets set DEFAULT_USER_ID=your-generated-uuid-here
-```
-
-### 3. Deploy the MCP Server
-
-Follow the [Deploy an Edge Function](../../primitives/deploy-edge-function/) guide using these values:
-
-| Setting | Value |
-|---------|-------|
-| Function name | `household-knowledge-mcp` |
-| Download path | `extensions/household-knowledge` |
 
 ### 4. Connect to Your AI
 
@@ -158,9 +136,9 @@ For common issues (connection errors, 401s, deployment problems), see [Common Tr
 **Extension-specific issues:**
 
 **"Permission denied" or foreign key errors on insert**
-- Verify `DEFAULT_USER_ID` is set: `supabase secrets list` should show it
-- The service role key bypasses RLS, so permission errors usually mean a missing env var
-- If you ran an older version of `schema.sql` that had `REFERENCES auth.users(id)`, drop and recreate the tables with the updated schema
+- Verify the `DATABASE_URL` in your `.env` file is correct
+- Check that the schema was created successfully by querying the tables
+- If you ran an older version of `schema.sql`, drop and recreate the tables with the updated schema
 
 ## Next Steps
 

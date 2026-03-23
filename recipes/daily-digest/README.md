@@ -4,13 +4,13 @@
 
 ## What It Does
 
-A Supabase Edge Function that runs on a cron schedule, queries your most recent thoughts, groups them by topic, and sends you a formatted summary. You wake up to a digest of everything your brain captured yesterday — themes, connections, and highlights.
+A scheduled job that runs on a cron schedule, queries your most recent thoughts, groups them by topic, and sends you a formatted summary. You wake up to a digest of everything your brain captured yesterday — themes, connections, and highlights.
 
 ## Prerequisites
 
 - Working Open Brain setup ([guide](../../docs/01-getting-started.md))
-- Supabase CLI installed (`npm i -g supabase`)
-- OpenRouter API key (for generating the summary)
+- Docker Compose stack running
+- LiteLLM API key (for generating the summary)
 - One of: email sending service (Resend, SendGrid free tier) OR existing Slack webhook
 
 ## Credential Tracker
@@ -22,9 +22,8 @@ DAILY DIGEST -- CREDENTIAL TRACKER
 --------------------------------------
 
 FROM YOUR OPEN BRAIN SETUP
-  Supabase Project URL:  ____________
-  Supabase Secret key:   ____________
-  OpenRouter API key:    ____________
+  DATABASE_URL:          ____________
+  LiteLLM API key:       ____________
 
 DELIVERY METHOD (choose one)
   [ ] Email service
@@ -42,10 +41,10 @@ DELIVERY METHOD (choose one)
 
 <!-- TODO: Fill in step-by-step instructions -->
 
-1. Clone this folder to your Supabase project's `supabase/functions/` directory
+1. Configure the daily digest in your Docker stack
 2. Configure your environment variables (delivery method, API keys)
-3. Deploy the edge function: `supabase functions deploy daily-digest`
-4. Set up the cron trigger in Supabase (Database → Extensions → pg_cron)
+3. Restart the Docker stack: `docker compose up -d`
+4. Set up the cron trigger via `pg_cron` in PostgreSQL
 5. Test with a manual invocation
 6. Verify you receive the digest
 
@@ -61,7 +60,7 @@ The digest arrives via your chosen delivery method (email or Slack message).
 
 ## Troubleshooting
 
-**Issue: Edge function deploys but never fires**
+**Issue: Digest job deploys but never fires**
 Solution: Make sure pg_cron extension is enabled and the cron job is configured correctly. Check `select * from cron.job` to verify it exists.
 
 **Issue: Digest arrives but is empty**

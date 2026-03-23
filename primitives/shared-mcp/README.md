@@ -44,7 +44,7 @@ Control operations per table:
 Before building a shared MCP server:
 
 - Working Open Brain installation with your primary MCP server
-- Supabase project (or PostgreSQL database with RLS support)
+- Self-hosted Docker stack running (or PostgreSQL database with RLS support)
 - Node.js 18+ installed
 - Understanding of database roles and permissions
 - The other person's Claude Desktop config access (or ability to share config)
@@ -77,7 +77,7 @@ Be explicit. Default to not sharing unless there's a clear reason.
 
 ### Step 2: Create a Scoped Database Role
 
-In Supabase SQL Editor (or via psql):
+In `psql` or `docker compose exec postgres psql`:
 
 ```sql
 -- Create a new database role for shared access
@@ -110,14 +110,14 @@ CREATE POLICY "Household members update shared lists"
   USING (household_id = current_setting('app.current_household')::uuid);
 ```
 
-**For Supabase specifically**: Create a service role key with restricted permissions through the Supabase dashboard, or use connection pooling with different credentials.
+
 
 ### Step 3: Build a Separate MCP Server
 
-Create a new Edge Function for the shared server. This is a Supabase Edge Function using Hono and the MCP SDK — the same pattern as the core Open Brain and all extensions.
+Create a separate MCP server for shared access. In the self-hosted architecture, this runs as part of the same Docker stack.
 
 ```typescript
-// shared-server index.ts (Supabase Edge Function)
+// shared-server index.ts (Node.js MCP server)
 import { Hono } from "hono";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPTransport } from "@hono/mcp";
@@ -227,15 +227,15 @@ Deno.serve(app.fetch);
 
 ### Step 4: Configure Separate Secrets
 
-Set the shared server's secrets in Supabase (separate from your main server's secrets):
+Set the shared server's secrets in your `.env` file (separate from your main server's secrets):
 
 ```bash
 # Generate a separate access key for the shared server
 openssl rand -hex 32
 
 # Set secrets
-supabase secrets set MCP_HOUSEHOLD_ACCESS_KEY=your-generated-shared-key
-supabase secrets set SUPABASE_HOUSEHOLD_KEY=your-limited-supabase-key  # LIMITED KEY
+set in your .env file: MCP_HOUSEHOLD_ACCESS_KEY=your-generated-shared-key
+SUPABASE_HOUSEHOLD_KEY=your-limited-db-password  # LIMITED KEY
 
 # Optional: Household ID for RLS
 SHARED_HOUSEHOLD_ID=uuid-here
@@ -263,26 +263,22 @@ Add to `package.json`:
 }
 ```
 
-### Step 5: Deploy as a Separate Edge Function
+### Step 5: Deploy the Shared Server
 
-Deploy the shared server as its own Supabase Edge Function:
-
-```bash
-supabase functions new household-shared-mcp
-```
-
-Copy the shared server code into `supabase/functions/household-shared-mcp/index.ts`, generate a separate access key, and deploy:
+The shared server runs as part of the same Docker stack. Configure the shared access key in your `.env` file:
 
 ```bash
 # Generate a separate access key for the shared server
 openssl rand -hex 32
 
-# Set the shared server's secrets
-supabase secrets set MCP_HOUSEHOLD_ACCESS_KEY=generated-key-here
-supabase secrets set SUPABASE_HOUSEHOLD_KEY=household-scoped-api-key
+# Add to your .env file
+MCP_HOUSEHOLD_ACCESS_KEY=generated-key-here
+```
 
-# Deploy
-supabase functions deploy household-shared-mcp --no-verify-jwt
+Then restart the stack:
+
+```bash
+docker compose up -d
 ```
 
 The other person connects via Claude Desktop:
@@ -290,13 +286,13 @@ The other person connects via Claude Desktop:
 1. Open Claude Desktop → **Settings** → **Connectors**
 2. Click **Add custom connector**
 3. Name: `Household Shared`
-4. Remote MCP server URL: `https://YOUR_PROJECT_REF.supabase.co/functions/v1/household-shared-mcp?key=shared-access-key`
+4. Remote MCP server URL: `https://<your-domain>/mcp/shared?key=shared-access-key`
 5. Click **Add**
 
 **Key points:**
 - They connect via URL — no Node.js, no config files, no terminal needed on their end
 - They do NOT need access to your main MCP server or credentials
-- You can revoke access by changing the shared access key in Supabase secrets
+- You can revoke access by changing the shared access key in your `.env` file and restarting with `docker compose up -d`
 
 ### Step 6: Test the Access Boundaries
 
@@ -373,7 +369,7 @@ But should NOT be able to:
    - `meal_plans`: SELECT only
    - `recipes`: SELECT only
    - `shopping_list_items`: SELECT, INSERT, UPDATE (no DELETE)
-3. **Credentials**: Separate Supabase service role key with table-level grants
+3. **Credentials**: Dedicated database role with table-level grants
 4. **Deployment**: Compiled MCP server on spouse's laptop, configured in their Claude Desktop
 
 **User experience for your spouse**:
@@ -432,7 +428,7 @@ GRANT SELECT, INSERT, UPDATE ON public.shopping_list_items TO household_member;
 
 **Symptom**: The scoped role can read tables that should be private (e.g., `thoughts`, `contacts`).
 
-**Cause**: The Supabase service role key has admin privileges, or the database role has excessive grants.
+**Cause**: The database superuser has admin privileges, or the database role has excessive grants.
 
 **Solution**:
 
@@ -451,7 +447,7 @@ FROM information_schema.role_table_grants
 WHERE grantee = 'household_member';
 ```
 
-For Supabase: Create a custom JWT with limited claims, or use connection pooling with role-based credentials.
+Create a dedicated PostgreSQL role for the shared server with only the necessary table grants.
 
 ### Issue 3: Changes not syncing between users
 
@@ -464,10 +460,10 @@ For Supabase: Create a custom JWT with limited claims, or use connection pooling
 
    ```bash
    # Your .env
-   echo $SUPABASE_URL
+   echo $DATABASE_URL
 
    # Their .env.shared
-   echo $SHARED_SUPABASE_URL
+   echo $SHARED_DATABASE_URL
    ```
 
 2. Verify RLS policies allow visibility:
@@ -518,9 +514,9 @@ For Supabase: Create a custom JWT with limited claims, or use connection pooling
 
 4. Verify the connector URL is correct:
 
-   - Check that the `?key=` value matches the `MCP_HOUSEHOLD_ACCESS_KEY` secret exactly
+   - Check that the `?key=` value matches the `MCP_HOUSEHOLD_ACCESS_KEY` in your `.env` file exactly
    - Try removing and re-adding the connector in Settings → Connectors
-   - Verify the Edge Function is deployed: `supabase functions list`
+   - Verify the Docker stack is running: `docker compose ps`
 
 ## Extensions That Use This
 

@@ -19,16 +19,16 @@ Copy this block into a text editor and fill it in as you go.
 SCHEMA NAME -- CREDENTIAL TRACKER
 --------------------------------------
 
-SUPABASE (from your Open Brain setup)
-  Project URL:           ____________
-  Secret key:            ____________
+OPEN BRAIN (from your Docker setup)
+  Domain / IP:           ____________
+  DATABASE_URL:          ____________
 
 --------------------------------------
 ```
 
 ## Steps
 
-1. Open your Supabase SQL Editor
+1. Connect to your database via `psql` or `docker compose exec postgres psql`
 2. Run the SQL migration:
 
    ```sql

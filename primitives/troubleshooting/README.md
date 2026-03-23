@@ -4,18 +4,18 @@ Solutions for issues that come up across any Open Brain extension. If your probl
 
 ## Connection Issues
 
-**"Cannot connect to Supabase"**
-- Verify your Supabase project is active (check the dashboard — paused projects need to be restored)
-- If using Edge Functions, `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are auto-injected — no manual setup needed
-- Check your Supabase project region matches your expectations
-- Ensure Row Level Security (RLS) policies are configured correctly (service role bypasses RLS, but policies must exist for RLS-enabled tables)
+**"Cannot connect to the database"**
+- Verify your Docker stack is running: `docker compose ps`
+- Check that `DATABASE_URL` is correctly set in your `.env` file
+- Verify the PostgreSQL container is healthy: `docker compose logs postgres`
+- Ensure schema-per-brain isolation is set up correctly
 
 **"Getting 401 Unauthorized"**
-- The access key doesn't match what's stored in Supabase secrets
+- The access key doesn't match what's stored in your `.env` file
 - Double-check that the `?key=` value in your Connection URL matches your MCP Access Key exactly
 - If using header-based auth (Claude Code or mcp-remote), the header must be `x-access-key` (lowercase, with the dash)
-- Verify the secret is set: `supabase secrets list` should show `MCP_ACCESS_KEY`
-- Try regenerating the key: `openssl rand -hex 32`, then `supabase secrets set MCP_ACCESS_KEY=new-key` and update your Connection URL
+- Verify the key is set in your `.env` file
+- Try regenerating the key: `openssl rand -hex 32`, then update `MCP_ACCESS_KEY` in `.env` and restart with `docker compose up -d`
 
 **"Tools don't appear in Claude Desktop"**
 - Verify the connector is enabled for your conversation — click the "+" button at the bottom of the chat → Connectors → check the toggle
@@ -31,33 +31,27 @@ Solutions for issues that come up across any Open Brain extension. If your probl
 
 ## Deployment Issues
 
-**Edge Function won't deploy**
-- Verify the Supabase CLI is installed and linked: `supabase --version`
-- Check that you're linked to the right project: `supabase link --project-ref YOUR_PROJECT_REF`
-- Verify the function directory exists: `ls supabase/functions/your-function-name/`
-- Make sure `deno.json` is in the function directory (not the project root)
-- Run `supabase functions deploy your-function --no-verify-jwt` (the `--no-verify-jwt` flag is required for MCP)
+**Docker stack won't start**
+- Verify Docker is installed and running: `docker --version`
+- Check for port conflicts: `docker compose logs`
+- Verify your `.env` file exists and has the required variables
+- Run `docker compose up -d` and check logs: `docker compose logs app`
 
-**"Invalid JWT" or JWT verification errors**
-- Make sure you deployed with `--no-verify-jwt` flag: `supabase functions deploy your-function --no-verify-jwt`
-- The MCP server handles its own authentication via the access key — JWT verification should be disabled
-
-**Deploy succeeds but function returns errors**
-- Check Edge Function logs: Supabase Dashboard → Edge Functions → your function → Logs
-- Look for import errors (usually means `deno.json` is missing or has wrong paths)
-- Verify secrets are set: `supabase secrets list`
-- Check function logs from terminal: `supabase functions logs your-function-name`
+**MCP server returns errors**
+- Check server logs: `docker compose logs app`
+- Look for missing environment variables in the logs
+- Verify your `.env` file has all required values
+- Check the PostgreSQL container is healthy: `docker compose logs postgres`
 
 ## Database Issues
 
 **"relation 'table_name' does not exist"**
 - The extension's `schema.sql` wasn't run successfully
-- Go to your Supabase SQL Editor and re-run the SQL
+- Re-run the SQL via `psql` or `docker compose exec postgres psql`
 - Check for errors in the SQL output — common issues include missing the pgvector extension or running statements out of order
 
 **"permission denied" or RLS errors**
-- The service role key bypasses Row Level Security, so this usually means a configuration issue
-- Verify the `SUPABASE_SERVICE_ROLE_KEY` is correct (not the publishable/anon key)
+- Check that the `DATABASE_URL` in your `.env` file is correct
 - For extensions using RLS (Extensions 4-6), verify the RLS policies were created by the schema.sql
 - Check that `user_id` values are valid UUIDs
 - Ensure all RLS-enabled tables have policies created correctly
@@ -71,10 +65,10 @@ Solutions for issues that come up across any Open Brain extension. If your probl
 ## Performance Issues
 
 **Tools work but responses are slow**
-- First request on a cold Edge Function takes a few seconds to warm up — this is normal
+- First request may take a moment if the server is starting up — this is normal
 - Subsequent calls within the same session are faster
-- Check your Supabase project region — pick the one closest to you
-- If consistently slow, check the Edge Function logs for query performance issues
+- Check your VPS location — pick the one closest to you
+- If consistently slow, check the server logs for query performance issues: `docker compose logs app`
 
 **Search returns no results**
 - Make sure you've added data first (the extension starts empty)
@@ -91,13 +85,12 @@ Solutions for issues that come up across any Open Brain extension. If your probl
 
 **"Auto-calculated fields not updating"**
 - Verify that the database trigger exists (check the schema.sql was run completely)
-- Check that the tool completed successfully (look at Edge Function logs)
+- Check that the tool completed successfully (look at the server logs via `docker compose logs app`)
 - For date calculations, ensure the frequency/interval field has a value set
 - For one-time tasks (null frequency), auto-calculated fields may remain null by design
 
 ## Getting More Help
 
-- **Supabase AI assistant**: Look for the chat icon in the bottom-right corner of your Supabase dashboard. It has access to all Supabase documentation and can help with database, Edge Function, and SQL issues.
 - **OB1 Discord**: Join the [Open Brain Discord](https://discord.gg/Cgh9WJEkeG) — there's a `#help` channel for troubleshooting.
 
 ## Extensions That Use This

@@ -32,25 +32,24 @@ A complete job search management system — companies, postings, applications, i
 
 - Working Open Brain setup
 - Extension 5 (Professional CRM) strongly recommended — cross-extension linking depends on it
-- Supabase CLI installed and linked to your project
+- Docker Compose stack running
 - **Required reading:** [Row Level Security](../../primitives/rls/) primitive
 
 ## Credential Tracker
 
 You'll reference these values during setup. Copy this block into a text editor and fill it in as you go.
 
-> **Already have your Supabase credentials from the [Setup Guide](../../docs/01-getting-started.md)?** You just need the same Project ref, Secret key, and MCP Access Key — reuse the key from your core setup.
+> **Already have your credentials from the [Setup Guide](../../docs/01-getting-started.md)?** You just need the same MCP Access Key and domain.
 
 ```text
 JOB HUNT PIPELINE -- CREDENTIAL TRACKER
 --------------------------------------
 
-SUPABASE (from your Open Brain setup)
-  Project ref:           ____________
-  Secret key:            ____________
+OPEN BRAIN (from your Docker setup)
+  Domain / IP:           ____________
+  DATABASE_URL:          ____________  (auto-configured in Docker)
 
-MCP SERVER (new for this extension)
-  Default User ID:       ____________
+MCP SERVER
   MCP Access Key:        ____________  (same key for all extensions)
   MCP Server URL:        ____________
   MCP Connection URL:    ____________
@@ -62,44 +61,24 @@ MCP SERVER (new for this extension)
 
 ### 1. Set Up the Database Schema
 
-Run the SQL in `schema.sql` in your Supabase SQL Editor:
+Run the SQL in `schema.sql` against your database:
 
 ```bash
-# Navigate to your Supabase project SQL editor
-# https://supabase.com/dashboard/project/YOUR_PROJECT_ID/sql/new
+docker compose exec postgres psql -U postgres -d open_brain -f /path/to/schema.sql
+# Or copy-paste into psql or your database client
 ```
 
-Copy and paste the contents of `schema.sql` and click Run. This creates five RLS-enabled tables with proper foreign key relationships and cascading deletes.
+This creates five tables with proper foreign key relationships and cascading deletes.
 
-### 2. Generate Your User ID
+### 2. Deploy the MCP Server
 
-The extension needs a user ID to scope your data. Generate a UUID and save it in your credential tracker:
+Extension tools are registered in the Node.js MCP server. Place new tools in `deploy/app/src/mcp/tools/` and restart:
 
 ```bash
-# macOS / Linux
-uuidgen | tr '[:upper:]' '[:lower:]'
-
-# Or use any UUID generator — the value just needs to be unique to you
+docker compose up -d
 ```
 
-Set it as an environment variable for your Edge Function:
-
-```bash
-supabase secrets set DEFAULT_USER_ID=your-generated-uuid-here
-```
-
-> If you already set `DEFAULT_USER_ID` for a previous extension, you can skip this step — all extensions share the same user ID.
-
-### 3. Deploy the MCP Server
-
-Follow the [Deploy an Edge Function](../../primitives/deploy-edge-function/) guide using these values:
-
-| Setting | Value |
-|---------|-------|
-| Function name | `job-hunt-mcp` |
-| Download path | `extensions/job-hunt` |
-
-### 4. Connect to Your AI
+### 3. Connect to Your AI
 
 Follow the [Remote MCP Connection](../../primitives/remote-mcp/) guide to connect this extension to Claude Desktop, ChatGPT, Claude Code, or any other MCP client.
 
@@ -108,7 +87,7 @@ Follow the [Remote MCP Connection](../../primitives/remote-mcp/) guide to connec
 | Connector name | `Job Hunt Pipeline` |
 | URL | Your **MCP Connection URL** from the credential tracker |
 
-### 5. Test the Extension
+### 4. Test the Extension
 
 Try these commands with Claude:
 
@@ -215,7 +194,7 @@ For common issues (connection errors, 401s, deployment problems), see [Common Tr
 **"Extension 5 not found" when linking contacts**
 - Verify Extension 5 (Professional CRM) is installed and its tables exist
 - Check that the `professional_contacts` table is accessible
-- Ensure both extensions are using the same Supabase project
+- Ensure both extensions are using the same database
 
 ## Next Steps
 

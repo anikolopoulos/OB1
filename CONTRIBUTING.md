@@ -45,7 +45,7 @@ Every contribution lives in its own subfolder under the right category (e.g., `r
 
 - **`README.md`** — What it does, prerequisites, step-by-step setup, expected outcome, troubleshooting
 - **`metadata.json`** — Structured metadata (see template below)
-- **Your actual code** — SQL files, edge function code, frontend code, config files, whatever it takes
+- **Your actual code** — SQL files, TypeScript tool handlers, frontend code, config files, whatever it takes
 - **NO credentials, API keys, or secrets.** The automated review will reject them. Use environment variables and document what the user needs to set.
 
 ## README Standards
@@ -53,7 +53,7 @@ Every contribution lives in its own subfolder under the right category (e.g., `r
 Your contribution's README must include these sections:
 
 1. **What it does** — 1-2 sentences. What capability does this add to Open Brain?
-2. **Prerequisites** — What the user needs before starting (e.g., "Working Open Brain setup," "OpenRouter API key," "Node.js 18+")
+2. **Prerequisites** — What the user needs before starting (e.g., "Working Open Brain setup," "LiteLLM API key," "Node.js 18+")
 3. **Step-by-step instructions** — Numbered steps, copy-paste ready where possible. Don't skip steps. Don't assume knowledge that isn't in the prerequisites.
 4. **Expected outcome** — What should the user see when it's working? Be specific.
 5. **Troubleshooting** — At least 2-3 common issues and how to fix them.
@@ -100,22 +100,18 @@ These patterns are required for **extensions** and strongly recommended for all 
 **Numbered commands** — When a step has 2+ commands that must run in order, number them with bold labels:
 
 ```markdown
-**1. Create the function folder:**
+**1. Start the services:**
 \```bash
-supabase functions new my-function
+docker compose up -d
 \```
 
-**2. Download the server code:**
+**2. Create a brain:**
 \```bash
-curl -o supabase/functions/my-function/index.ts https://...
+curl -X POST https://<domain>/admin/brains ...
 \```
 ```
 
-**GRANT step** — Every extension that creates tables MUST include a GRANT step. Supabase no longer auto-grants CRUD permissions to `service_role` on new projects:
-
-```sql
-grant select, insert, update, delete on table public.your_table to service_role;
-```
+**Database tables** — Extension tables are created in the `brain_template` schema (see `deploy/db/init/`) and automatically cloned into each brain's schema when a brain is created. If adding a new extension, add a numbered init script (e.g., `011-template-ext-myext.sql`) and register the extension in `deploy/app/src/mcp/tools/registry.ts`.
 
 ### Extension-Specific Requirements
 
@@ -124,7 +120,7 @@ grant select, insert, update, delete on table public.your_table to service_role;
 - **"What You'll Learn"** listing new concepts introduced
 - **"Cross-Extension Integration"** prominently documenting connections to other extensions
 - **"Next Steps"** linking to the next extension
-- **Remote MCP setup** — MCP servers must be deployed as Supabase Edge Functions and connected via custom connectors (URL-based). Do NOT use local Node.js servers or `claude_desktop_config.json`. See the [extension template](extensions/_template/) for the correct pattern.
+- **MCP tool registration** — Extension tools are registered in the Node.js MCP server (`deploy/app/src/mcp/tools/`). Each extension exports an `ExtensionDefinition` with `requiredTables` and a `register()` function. See the [extension template](extensions/_template/) and existing extensions for the correct pattern.
 
 **Primitives** additionally require:
 - **"Extensions That Use This"** section listing which extensions reference this primitive
@@ -251,4 +247,4 @@ Every PR is checked against these rules. All must pass before human review.
 11. **LLM clarity review** — *(Planned for v2)* Automated check that instructions are clear and complete
 12. **Scope check** — All changes are within the contribution folder(s)
 13. **Internal links** — All relative links in READMEs resolve to existing files
-14. **Remote MCP pattern** — Extensions and integrations must use remote MCP via Supabase Edge Functions. No `claude_desktop_config.json`, no local Node.js stdio servers. See the [Getting Started guide](docs/01-getting-started.md) for the correct pattern
+14. **MCP tool pattern** — Extensions register tools in the Node.js MCP server via `ExtensionDefinition` exports. See `deploy/app/src/mcp/tools/registry.ts` for the pattern

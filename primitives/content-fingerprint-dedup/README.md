@@ -33,7 +33,7 @@ Input: "  Hello   World  "
 
 ### Step 1: Add the fingerprint column
 
-Run this in your Supabase SQL Editor:
+Run this against your database (via `psql` or `docker compose exec postgres psql`):
 
 ```sql
 ALTER TABLE thoughts ADD COLUMN content_fingerprint TEXT;
@@ -73,7 +73,7 @@ END;
 $$ LANGUAGE plpgsql;
 ```
 
-Now call it from your Edge Function or import script:
+Now call it from your MCP server or import script:
 
 ```sql
 SELECT upsert_thought('My thought content', '{"metadata": {"source": "chatgpt"}}'::jsonb);

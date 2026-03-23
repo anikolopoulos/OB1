@@ -4,13 +4,14 @@ This file helps AI coding tools (Claude Code, Codex, Cursor, etc.) work effectiv
 
 ## What This Repo Is
 
-Open Brain is a persistent AI memory system — one database (Supabase + pgvector), one MCP protocol, any AI client. This repo contains the extensions, recipes, schemas, dashboards, and integrations that the community builds on top of the core Open Brain setup.
+Open Brain is a persistent AI memory system — one self-hosted database (PostgreSQL + pgvector), one AI gateway (LiteLLM), one MCP protocol, any AI client. This repo contains the self-hosted Docker deployment (`deploy/`), plus the extensions, recipes, schemas, dashboards, and integrations that the community builds on top of the core Open Brain setup.
 
 **License:** FSL-1.1-MIT. No commercial derivative works. Keep this in mind when generating code or suggesting dependencies.
 
 ## Repo Structure
 
 ```
+deploy/         — Self-hosted Docker deployment (Node.js MCP server, PostgreSQL, Caddy).
 extensions/     — Curated, ordered learning path (6 builds). Do NOT add without maintainer approval.
 primitives/     — Reusable concept guides (must be referenced by 2+ extensions). Curated.
 recipes/        — Standalone capability builds. Open for community contributions.
@@ -23,13 +24,29 @@ resources/      — Claude Skill, companion files.
 
 Every contribution lives in its own subfolder under the right category and must include `README.md` + `metadata.json`.
 
+## Architecture
+
+The system runs as a Docker Compose stack:
+- **PostgreSQL** (pgvector/pgvector:pg17) — stores thoughts with vector embeddings, extension tables
+- **Node.js app** (Hono + MCP SDK) — serves MCP tools, Admin API, and Slack capture
+- **Caddy** — reverse proxy with auto-TLS
+- **LiteLLM** (external) — OpenAI-compatible AI gateway for embeddings and metadata extraction
+
+Multi-brain isolation: each user gets their own PostgreSQL schema (`brain_<slug>`), managed via the Admin API. The MCP server sets `search_path` per request based on the API key.
+
+Key deploy files:
+- `deploy/docker-compose.yml` — service definitions
+- `deploy/app/src/index.ts` — main entry point (Hono app)
+- `deploy/app/src/mcp/tools/` — all MCP tool implementations
+- `deploy/db/init/` — SQL init scripts (run automatically on first boot)
+
 ## Guard Rails
 
 - **Never modify the core `thoughts` table structure.** Adding columns is fine; altering or dropping existing ones is not.
 - **No credentials, API keys, or secrets in any file.** Use environment variables.
 - **No binary blobs** over 1MB. No `.exe`, `.dmg`, `.zip`, `.tar.gz`.
 - **No `DROP TABLE`, `DROP DATABASE`, `TRUNCATE`, or unqualified `DELETE FROM`** in SQL files.
-- **MCP servers must be remote (Supabase Edge Functions), not local.** Never use `claude_desktop_config.json`, `StdioServerTransport`, or local Node.js servers. All extensions deploy as Edge Functions and connect via Claude Desktop's custom connectors UI (Settings → Connectors → Add custom connector → paste URL). See `docs/01-getting-started.md` Step 7 for the pattern.
+- **MCP tools are served by the Node.js app** in `deploy/app/`. Extensions are registered dynamically based on which tables exist in the brain's schema. See `deploy/app/src/mcp/tools/registry.ts` for the extension registry.
 
 ## PR Standards
 

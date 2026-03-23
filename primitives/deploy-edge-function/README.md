@@ -1,11 +1,14 @@
 # Deploy an Edge Function
 
+> [!WARNING]
+> **This guide is for the original Supabase deployment and is now obsolete.** The self-hosted Docker deployment handles this automatically. Extensions are deployed by placing tool files in `deploy/app/src/mcp/tools/` and running `docker compose up -d`. See [Getting Started](../../docs/01-getting-started.md) for the current setup process.
+
 A guide to deploying any Open Brain extension as a Supabase Edge Function. This is the same pattern used by the core Open Brain MCP server — one deployment, accessible from any AI client.
 
 ## Prerequisites
 
 - Completed the [Getting Started Guide](../../docs/01-getting-started.md) — you should already have:
-  - Supabase CLI installed
+  - Docker Compose stack running
   - A project folder with `supabase init` and `supabase link` already done
   - Your credential tracker with Supabase project ref and secrets
 
@@ -93,7 +96,7 @@ Copy the output (64 characters). Save it in your credential tracker.
 Set it as a Supabase secret:
 
 ```bash
-supabase secrets set MCP_ACCESS_KEY=your-generated-key-here
+set in your .env file: MCP_ACCESS_KEY=your-generated-key-here
 ```
 
 > If you already set `MCP_ACCESS_KEY` for a previous extension or during the Getting Started guide, setting it again will overwrite it. All functions share the same secrets, so every deployed function will use the new key. If you want separate keys per extension, use a different secret name (e.g., `HOUSEHOLD_MCP_KEY`) and update the extension's `index.ts` to read from that name instead.
@@ -101,7 +104,7 @@ supabase secrets set MCP_ACCESS_KEY=your-generated-key-here
 ## Step 4: Deploy
 
 ```bash
-supabase functions deploy FUNCTION_NAME --no-verify-jwt
+docker compose up -d FUNCTION_NAME --no-verify-jwt
 ```
 
 Your MCP server is now live at:
@@ -139,7 +142,7 @@ Invoke-WebRequest -Uri https://raw.githubusercontent.com/NateBJones-Projects/OB1
 Then deploy:
 
 ```bash
-supabase functions deploy FUNCTION_NAME --no-verify-jwt
+docker compose up -d FUNCTION_NAME --no-verify-jwt
 ```
 
 The URL and access key stay the same — no need to reconfigure your AI clients.
@@ -157,8 +160,8 @@ The URL and access key stay the same — no need to reconfigure your AI clients.
 - Run `ls supabase/functions/FUNCTION_NAME/` — you should see both `index.ts` and `deno.json`
 
 **Deploy succeeds but function returns errors**
-- Check Edge Function logs: Supabase Dashboard → Edge Functions → your function → Logs
-- Verify secrets are set: `supabase secrets list` should show `MCP_ACCESS_KEY`
+- Check MCP server logs: docker compose logs app → Edge Functions → your function → Logs
+- Verify secrets are set: `check your .env file` should show `MCP_ACCESS_KEY`
 - `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are auto-injected — if they're missing, your Supabase project may need to be restarted
 
 **"Invalid JWT" or authentication errors**

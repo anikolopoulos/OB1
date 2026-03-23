@@ -70,7 +70,7 @@ Lead with the human pain point. What real-life scenario makes this extension wor
 ## Prerequisites
 
 - Working Open Brain setup ([guide](../../docs/01-getting-started.md))
-- Supabase CLI installed and linked to your project
+- Docker Compose stack running ([guide](../../docs/01-getting-started.md))
 - List any earlier extensions that must be completed first
 - List any required primitives with links
 
@@ -78,16 +78,15 @@ Lead with the human pain point. What real-life scenario makes this extension wor
 
 Copy this block into a text editor and fill it in as you go.
 
-> **Already have your Supabase credentials from the [Setup Guide](../../docs/01-getting-started.md)?** You just need the same Project URL, Secret key, and Project ref.
+> **Already have your credentials from the [Setup Guide](../../docs/01-getting-started.md)?** You just need the same MCP Access Key and domain.
 
 ```text
 EXTENSION NAME -- CREDENTIAL TRACKER
 --------------------------------------
 
-SUPABASE (from your Open Brain setup)
-  Project URL:           ____________
-  Secret key:            ____________
-  Project ref:           ____________
+OPEN BRAIN (from your Docker setup)
+  Domain / IP:           ____________
+  DATABASE_URL:          ____________  (auto-configured in Docker)
 
 GENERATED DURING SETUP
   MCP Access Key:        ____________  (same key for all extensions)
@@ -106,7 +105,7 @@ GENERATED DURING SETUP
 
 ![1.1](https://img.shields.io/badge/1.1-Create_the_Tables-555?style=for-the-badge&labelColor=HEX_COLOR)
 
-In your Supabase SQL Editor (`https://supabase.com/dashboard/project/YOUR_PROJECT_ID/sql/new`), paste and Run:
+Run in your database via `psql` or `docker compose exec postgres psql`, then paste and run:
 
 <details>
 <summary>📋 <strong>SQL: Extension tables</strong> (click to expand)</summary>
@@ -118,48 +117,27 @@ In your Supabase SQL Editor (`https://supabase.com/dashboard/project/YOUR_PROJEC
 
 </details>
 
-![1.2](https://img.shields.io/badge/1.2-Grant_Table_Permissions-555?style=for-the-badge&labelColor=HEX_COLOR)
+![1.2](https://img.shields.io/badge/1.2-Verify-555?style=for-the-badge&labelColor=HEX_COLOR)
 
-New query → paste and Run:
+✅ **Done when:** Querying your database (via `psql` or a database client) shows your new tables with the expected columns.
 
-<!--
-IMPORTANT: Every extension MUST include this GRANT step.
-Replace table_name and table_name_2 with your actual table names.
-Add one line per table your extension creates.
--->
-
-<details>
-<summary>📋 <strong>SQL: Grant service_role access</strong> (click to expand)</summary>
-
-```sql
-grant select, insert, update, delete on table public.table_name to service_role;
-grant select, insert, update, delete on table public.table_name_2 to service_role;
-```
-
-</details>
-
-> [!IMPORTANT]
-> This step is required. Supabase does not grant full table permissions to `service_role` by default on new projects. Without this, your MCP server will return "permission denied" errors.
-
-![1.3](https://img.shields.io/badge/1.3-Verify-555?style=for-the-badge&labelColor=HEX_COLOR)
-
-✅ **Done when:** Table Editor shows your new tables with the expected columns.
+> [!NOTE]
+> In the self-hosted Docker architecture, the Node.js app connects directly to PostgreSQL. No separate permission grants are needed -- the app has full access to its brain's schema.
 
 ---
 
 ![Step 2](https://img.shields.io/badge/Step_2-Deploy_the_MCP_Server-HEX_COLOR?style=for-the-badge)
 
-Follow the [Deploy an Edge Function](../../primitives/deploy-edge-function/) guide using these values:
+Extension tools are registered in the Node.js MCP server at `deploy/app/src/mcp/tools/`. If this extension adds new tools, place them there and redeploy:
 
-| Setting | Value |
-|---------|-------|
-| Function name | `extension-name-mcp` |
-| Download path | `extensions/extension-name` |
+```bash
+docker compose up -d
+```
 
 > [!TIP]
-> If you already deployed the core Open Brain server, this process is identical — just with a different function name and download path.
+> If you already have the core Open Brain Docker stack running, new tools are picked up automatically on restart.
 
-✅ **Done when:** `supabase functions list` shows `extension-name-mcp` as `ACTIVE`.
+✅ **Done when:** `docker compose ps` shows all services healthy.
 
 ---
 
@@ -188,9 +166,9 @@ Try these prompts in your AI client:
 3. **Test prompt 3** — describe what this tests and what the user should see
 
 > [!CAUTION]
-> If any prompt returns an error, check the Edge Function logs in your Supabase dashboard (Edge Functions → `extension-name-mcp` → Logs) before troubleshooting further.
+> If any prompt returns an error, check the MCP server logs with `docker compose logs app` before troubleshooting further.
 
-✅ **Done when:** All test prompts return expected results and you can see data in your Supabase Table Editor.
+✅ **Done when:** All test prompts return expected results and you can see data in your database (via `psql` or a database client).
 
 ---
 
@@ -220,10 +198,10 @@ For common issues (connection errors, 401s, deployment problems), see [Common Tr
      bold error message followed by a bullet-point fix. -->
 
 **"permission denied for table table_name"**
-- You skipped Step 1.2. Go back and run the `GRANT` SQL.
+- Verify the Node.js app's `DATABASE_URL` is correct in your `.env` file.
 
 **"relation 'table_name' does not exist"**
-- The schema SQL wasn't run successfully — re-run it in the Supabase SQL Editor.
+- The schema SQL wasn't run successfully — re-run it via `psql` or `docker compose exec postgres psql`.
 
 ## Next Steps
 

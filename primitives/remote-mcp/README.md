@@ -1,13 +1,13 @@
 # Remote MCP Connection
 
-A guide to connecting your Open Brain extensions to any AI client. Deploy once as a Supabase Edge Function, connect from anywhere.
+A guide to connecting your Open Brain extensions to any AI client. Deploy once via Docker, connect from anywhere.
 
 **Jump to your client:**
 [Claude Desktop](#claude-desktop) | [ChatGPT](#chatgpt) | [Claude Code](#claude-code) | [Cursor / Windsurf / VS Code / Zed](#other-clients-cursor-windsurf-vs-code-zed) | [Troubleshooting](#troubleshooting)
 
 ## What You Need
 
-- Your **MCP Connection URL** (from the extension's credential tracker — looks like `https://YOUR_REF.supabase.co/functions/v1/extension-mcp?key=your-access-key`)
+- Your **MCP Connection URL** (from the extension's credential tracker — looks like `https://<your-domain>/mcp?key=<brain-key>`)
 - The AI client you want to connect
 
 ## Claude Desktop
@@ -49,7 +49,7 @@ Requires a paid ChatGPT plan (Plus, Pro, Business, Enterprise, or Edu). Works on
 
 ```bash
 claude mcp add --transport http extension-name \
-  https://YOUR_PROJECT_REF.supabase.co/functions/v1/extension-mcp \
+  https://<your-domain>/mcp \
   --header "x-access-key: your-access-key"
 ```
 
@@ -70,7 +70,7 @@ Every MCP client handles remote servers slightly differently. Your extension acc
       "command": "npx",
       "args": [
         "mcp-remote",
-        "https://YOUR_PROJECT_REF.supabase.co/functions/v1/extension-mcp",
+        "https://<your-domain>/mcp",
         "--header",
         "x-access-key:${ACCESS_KEY}"
       ],
@@ -97,14 +97,14 @@ Every MCP client handles remote servers slightly differently. Your extension acc
 - Be explicit: "Use the [tool_name] tool to [do thing]." ChatGPT often needs direct tool references the first few times.
 
 **Getting 401 errors**
-- The access key doesn't match what's stored in Supabase secrets
+- The access key doesn't match what's stored in your `.env` file
 - Double-check that the `?key=` value in your URL matches your MCP Access Key exactly
 - If using the header approach (Claude Code or mcp-remote), the header must be `x-access-key` (lowercase, with the dash)
 
 **Tools work but responses are slow**
-- First request on a cold Edge Function takes a few seconds to warm up
+- First request may take a moment if the server is starting up
 - Subsequent calls are faster
-- Check your Supabase project region — pick the one closest to you
+- Check your VPS location — pick the one closest to you
 
 ## Extensions That Use This
 

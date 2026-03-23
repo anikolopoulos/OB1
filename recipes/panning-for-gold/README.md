@@ -26,8 +26,8 @@ Takes any unstructured text (voice transcripts, ChatGPT exports, freeform notes,
 
 ```
 From your existing Open Brain setup:
-- Project URL: _______________
-- OpenRouter API key: _______________
+- Domain / IP: _______________
+- LiteLLM API key: _______________
 - Open Brain MCP server connected: yes / no
 
 No additional credentials needed for this recipe.

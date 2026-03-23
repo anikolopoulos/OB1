@@ -4,14 +4,14 @@
 
 ## What It Does
 
-Source filtering lets you scope `search_thoughts`, `list_thoughts`, and `thought_stats` to a single source type (e.g., `mcp`, `gmail`, `chatgpt`, `obsidian`). The backfill script adds structured metadata (type, topics, people, sentiment) to thoughts that were imported without LLM extraction — like bulk email imports that went straight into Supabase.
+Source filtering lets you scope `search_thoughts`, `list_thoughts`, and `thought_stats` to a single source type (e.g., `mcp`, `gmail`, `chatgpt`, `obsidian`). The backfill script adds structured metadata (type, topics, people, sentiment) to thoughts that were imported without LLM extraction — like bulk email imports that went straight into PostgreSQL.
 
 ## Prerequisites
 
 - Working Open Brain setup ([guide](../../docs/01-getting-started.md))
 - Deno 1.40+ (for backfill script only)
-- Supabase project URL and service role key
-- OpenRouter API key (for backfill script only)
+- Database URL
+- LiteLLM API key (for backfill script only)
 
 ## Credential Tracker
 
@@ -22,11 +22,11 @@ SOURCE FILTERING -- CREDENTIAL TRACKER
 --------------------------------------
 
 FROM YOUR OPEN BRAIN SETUP
-  Supabase Project URL:        ____________
-  Supabase Service Role Key:   ____________
+  DATABASE_URL:                ____________
 
 FOR BACKFILL ONLY
-  OpenRouter API Key:          ____________
+  LiteLLM API Key:             ____________
+  LiteLLM URL:                 ____________
 
 --------------------------------------
 ```
@@ -42,7 +42,7 @@ FOR BACKFILL ONLY
 
 ### Step 1: Check your sources
 
-Run this query in the Supabase SQL Editor to see what sources exist in your brain:
+Run this query via `psql` or your database client to see what sources exist in your brain:
 
 ```sql
 SELECT metadata->>'source' AS source, COUNT(*) AS count
@@ -89,7 +89,7 @@ Without the `source` parameter, all three tools return results across all source
 
 ### Step 3: Check if you need backfill
 
-If you imported thoughts without going through `capture_thought` (e.g., bulk email import via direct Supabase insert), those thoughts may be missing LLM-extracted metadata like `type`, `topics`, and `people`. Check:
+If you imported thoughts without going through `capture_thought` (e.g., bulk email import via direct PostgreSQL insert), those thoughts may be missing LLM-extracted metadata like `type`, `topics`, and `people`. Check:
 
 ```sql
 SELECT COUNT(*) AS missing_metadata
@@ -102,9 +102,8 @@ If this returns 0, you're done — skip to Step 6. If it returns a number, conti
 ### Step 4: Set up environment variables for backfill
 
 ```bash
-export SUPABASE_URL="https://your-project.supabase.co"
-export SUPABASE_SERVICE_ROLE_KEY="your-service-role-key"
-export OPENROUTER_API_KEY="your-openrouter-key"
+export DATABASE_URL="postgresql://user:pass@localhost:5432/open_brain"
+export LITELLM_API_KEY="your-litellm-key"
 ```
 
 ### Step 5: Run the backfill
@@ -167,7 +166,7 @@ WHERE metadata->>'source' IS NULL;
 **Backfill says "Found 0 thought(s) missing metadata"**
 All your thoughts already have LLM-extracted metadata. This happens if everything was imported through `capture_thought`, which extracts metadata automatically.
 
-**Rate limiting from OpenRouter**
+**Rate limiting from LiteLLM**
 The script batches requests (default 10 concurrent) with a 500ms pause between batches. If you hit rate limits, reduce the batch size:
 
 ```bash

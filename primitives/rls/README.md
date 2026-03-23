@@ -1,5 +1,8 @@
 # Row Level Security (RLS)
 
+> [!NOTE]
+> **In the current self-hosted Docker architecture, schema-per-brain isolation is the primary multi-tenancy mechanism.** Each brain gets its own PostgreSQL schema, so data is isolated at the schema level. RLS is no longer required for basic multi-tenancy, but it can optionally be added *within* a brain for finer-grained control — for example, giving household members scoped access to specific tables within a shared brain.
+
 Row Level Security (RLS) is PostgreSQL's built-in mechanism for controlling which rows in a table are visible or modifiable by different users. Instead of managing access control in your application code, you define policies directly on the database — so security is enforced at the data layer regardless of how you connect (MCP, REST API, direct SQL).
 
 ## Why RLS Matters for Open Brain Extensions
@@ -15,21 +18,18 @@ RLS is the foundation that makes multi-user and shared-access extensions possibl
 
 ## Prerequisites
 
-- A Supabase project with at least one table created
+- A PostgreSQL database with at least one table created
 - Basic understanding of SQL and PostgreSQL
-- Familiarity with Supabase authentication (users have UUIDs via `auth.uid()`)
 
-## How PostgreSQL Policies Work in Supabase
+## How PostgreSQL RLS Policies Work
 
-Supabase uses PostgreSQL's RLS system with a few key conventions:
+PostgreSQL's RLS system works with these key concepts:
 
-1. **Authentication context**: Supabase automatically sets the database user based on the JWT token passed in requests. You can access the current user's ID with `auth.uid()`.
+1. **Policies are additive**: If multiple policies apply to a query, a row is returned if ANY policy allows it (they're OR'd together).
 
-2. **Policies are additive**: If multiple policies apply to a query, a row is returned if ANY policy allows it (they're OR'd together).
+2. **Superuser bypasses RLS**: The database superuser bypasses RLS entirely — useful for admin operations, but be careful not to use it when you want RLS enforced.
 
-3. **Service role bypasses RLS**: The `service_role` key bypasses RLS entirely — useful for admin operations, but be careful not to use it when you want RLS enforced.
-
-4. **Four policy types**:
+3. **Four policy types**:
    - `SELECT` — who can read rows
    - `INSERT` — who can create rows
    - `UPDATE` — who can modify rows
@@ -76,7 +76,7 @@ CREATE POLICY "Users can delete their own notes"
   USING (auth.uid() = user_id);
 ```
 
-**Expected Outcome**: Each authenticated user sees only rows where `user_id` matches their Supabase auth UUID. Other users' data is completely invisible.
+**Expected Outcome**: Each authenticated user sees only rows where `user_id` matches their UUID. Other users' data is completely invisible.
 
 ### Pattern 2: Team/Household-Scoped (Family Members Share Access)
 
@@ -248,10 +248,7 @@ CREATE POLICY "Users can delete their own recipes"
 
 ## Step-by-Step Guide for Enabling RLS on a Table
 
-1. **Navigate to the Supabase SQL Editor**:
-   - Go to your project dashboard
-   - Click "SQL Editor" in the left sidebar
-   - Click "New query"
+1. **Connect to your database** via `psql` or `docker compose exec postgres psql`.
 
 2. **Enable RLS on your table**:
 
@@ -277,8 +274,8 @@ CREATE POLICY "Users can delete their own recipes"
      WITH CHECK (auth.uid() = user_id);
    ```
 
-5. **Test with the Supabase client**:
-   - Use the `supabase-js` client with a user JWT (not the service role)
+5. **Test with a database client**:
+   - Connect with a non-superuser role
    - Query the table and verify you only see appropriate rows
    - Try inserting data and confirm the policy allows/blocks as expected
 
@@ -306,29 +303,27 @@ CREATE POLICY "Users can delete their own recipes"
   ```
 
 - If no policies exist, create at least a SELECT policy
-- Verify `auth.uid()` returns a value (run `SELECT auth.uid();` in SQL editor while authenticated)
-- Make sure you're using the `anon` or `authenticated` role, not the `service_role` key
+- Verify the correct database role is being used
+- Make sure you're not connecting as the superuser
 
 ### Issue 2: My service role key bypasses RLS
 
-**Cause**: This is intentional behavior. The `service_role` key has superuser privileges and ignores all RLS policies.
+**Cause**: This is intentional behavior. The database superuser ignores all RLS policies.
 
 **Solution**:
-- Use the `anon` key for unauthenticated operations
-- Use the `authenticated` role (via user JWT tokens) for authenticated operations
-- Only use `service_role` for admin tasks where you explicitly want to bypass RLS
-- If your MCP server is using `service_role`, consider switching to user-scoped JWTs or use a dedicated service account with limited privileges
+- Create dedicated database roles with limited permissions for application use
+- Only use the superuser for admin tasks where you explicitly want to bypass RLS
+- If your MCP server is connecting as superuser, consider creating a dedicated application role with limited privileges
 
 ### Issue 3: Policies aren't working with my MCP server
 
-**Cause**: MCP servers often use the `service_role` key, which bypasses RLS. Alternatively, the authentication context isn't being passed correctly.
+**Cause**: MCP servers often connect as the database superuser, which bypasses RLS. Alternatively, the connection role isn't being set correctly.
 
 **Solution**:
-- Verify which key your MCP server is using (check the server config)
-- If using `service_role`: Either accept that RLS is bypassed, or refactor to use user tokens
-- If using `anon`/user tokens: Ensure the JWT is being passed in the `Authorization` header
-- Test policies directly in the SQL editor with `SELECT auth.uid();` to confirm authentication context
-- Consider implementing user-scoped RLS even with `service_role` by adding a `user_id` parameter to your queries and filtering explicitly
+- Verify which database role your MCP server is using (check the connection string)
+- If using the superuser: Either accept that RLS is bypassed, or create a dedicated application role
+- Test policies by connecting as the application role via `psql`
+- Consider implementing user-scoped RLS by adding a `user_id` parameter to your queries and filtering explicitly
 
 ## Extensions That Use This
 
@@ -338,7 +333,5 @@ CREATE POLICY "Users can delete their own recipes"
 
 ## Further Reading
 
-- [Supabase Row Level Security Guide](https://supabase.com/docs/guides/auth/row-level-security)
 - [PostgreSQL Policy Documentation](https://www.postgresql.org/docs/current/sql-createpolicy.html)
-- [Supabase Auth Helpers](https://supabase.com/docs/guides/auth/auth-helpers) — for implementing user authentication in your application
-- [Understanding PostgreSQL RLS Performance](https://supabase.com/blog/postgres-rls-performance) — optimization tips for complex policies
+- [PostgreSQL Row Security Policies](https://www.postgresql.org/docs/current/ddl-rowsecurity.html)

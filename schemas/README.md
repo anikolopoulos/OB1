@@ -2,7 +2,7 @@
 
 https://github.com/user-attachments/assets/9454662f-2648-4928-8723-f7d52e94e9b8
 
-Database table extensions and metadata schemas for your Supabase database. Drop them in alongside your existing `thoughts` table.
+Database table extensions and metadata schemas for your PostgreSQL database. Drop them in alongside your existing `thoughts` table.
 
 | Schema | What It Does |
 | ------ | ------------ |

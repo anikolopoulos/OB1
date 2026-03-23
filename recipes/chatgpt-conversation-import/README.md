@@ -11,8 +11,8 @@ Takes your ChatGPT data export, filters out trivial conversations (poems, one-li
 - Working Open Brain setup ([guide](../../docs/01-getting-started.md))
 - Your ChatGPT data export (Settings → Data Controls → Export Data in ChatGPT)
 - Python 3.10+
-- Your Supabase project URL and service role key (from your credential tracker)
-- OpenRouter API key (for LLM summarization and embedding generation)
+- Your `DATABASE_URL` (from your credential tracker)
+- LiteLLM API key (for LLM summarization and embedding generation)
 
 ## Credential Tracker
 
@@ -23,9 +23,8 @@ CHATGPT CONVERSATION IMPORT -- CREDENTIAL TRACKER
 --------------------------------------
 
 FROM YOUR OPEN BRAIN SETUP
-  Supabase Project URL:  ____________
-  Supabase Secret key:   ____________
-  OpenRouter API key:    ____________
+  DATABASE_URL:          ____________
+  LiteLLM API key:       ____________
 
 FILE LOCATION
   Path to ChatGPT export:  ____________
@@ -59,12 +58,12 @@ This installs `requests` — the only external dependency.
 ### 4. Set your environment variables
 
 ```bash
-export SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
-export SUPABASE_SERVICE_ROLE_KEY=your-service-role-key-here
-export OPENROUTER_API_KEY=sk-or-v1-your-key-here
+export DATABASE_URL=postgresql://user:pass@localhost:5432/open_brain
+export LITELLM_API_KEY=your-litellm-key
+export LITELLM_URL=http://localhost:4000
 ```
 
-All three values come from your credential tracker. You can also copy `.env.example` to `.env` and fill it in, then run `export $(cat .env | xargs)`.
+All values come from your credential tracker. You can also copy `.env.example` to `.env` and fill it in, then run `export $(cat .env | xargs)`.
 
 ### 5. Do a dry run first
 
@@ -85,13 +84,13 @@ The script will:
 2. Filter out trivial conversations (see How It Works below)
 3. Summarize each remaining conversation into 1-3 standalone thoughts via LLM
 4. Generate a vector embedding for each thought
-5. Insert each thought into your `thoughts` table in Supabase
+5. Insert each thought into your `thoughts` table in PostgreSQL
 
 Progress prints to the console as it runs. A sync log (`chatgpt-sync-log.json`) tracks which conversations have been imported, so you can safely re-run the script after future exports without duplicating data.
 
 ### 7. Verify in your database
 
-Open your Supabase dashboard → Table Editor → `thoughts`. You should see new rows with:
+Open your database via `psql` or a database client and query the `thoughts` table. You should see new rows with:
 - `content`: prefixed with `[ChatGPT: title | date]`
 - `metadata`: includes `source: "chatgpt"`, conversation title, date, and URL
 - `embedding`: a 1536-dimension vector
@@ -135,7 +134,7 @@ The filtering is aggressive by design — most ChatGPT conversations are throwaw
 | Do-not-remember | Conversations you marked as "don't remember" in ChatGPT |
 | Date range | Outside your `--after` / `--before` window |
 
-**Stage 2: Summarization** — Surviving conversations go to an LLM (gpt-4o-mini by default via OpenRouter) with a carefully tuned prompt. The LLM extracts 1-3 standalone thoughts per conversation, focusing on:
+**Stage 2: Summarization** — Surviving conversations go to an LLM (gpt-4o-mini by default via LiteLLM) with a carefully tuned prompt. The LLM extracts 1-3 standalone thoughts per conversation, focusing on:
 - Decisions and reasoning
 - People and relationships
 - Strategies and architectural choices
@@ -157,16 +156,16 @@ The sync log (`chatgpt-sync-log.json`) stores a hash of each processed conversat
 | `--after YYYY-MM-DD` | Only process conversations created after this date | None |
 | `--before YYYY-MM-DD` | Only process conversations created before this date | None |
 | `--limit N` | Max conversations to process (0 = unlimited) | 0 |
-| `--model openrouter` | LLM backend for summarization: `openrouter` or `ollama` | `openrouter` |
+| `--model openrouter` | LLM backend for summarization: `openrouter` (uses LiteLLM-compatible endpoint) or `ollama` | `openrouter` |
 | `--ollama-model NAME` | Which Ollama model to use (requires `--model ollama`) | `qwen3` |
 | `--raw` | Skip LLM summarization, ingest user messages as-is | Off |
 | `--verbose` | Print full thought text during processing | Off |
 | `--report FILE` | Write a markdown report of everything imported | None |
-| `--ingest-endpoint` | Use custom `INGEST_URL`/`INGEST_KEY` instead of Supabase direct insert | Off |
+| `--ingest-endpoint` | Use custom `INGEST_URL`/`INGEST_KEY` instead of direct database insert | Off |
 
 ### Using a local LLM (free, private)
 
-If you don't want to send your conversations to OpenRouter, use Ollama for local summarization:
+If you don't want to send your conversations to LiteLLM, use Ollama for local summarization:
 
 ```bash
 # Install Ollama and pull a model
@@ -176,11 +175,11 @@ ollama pull qwen3
 python import-chatgpt.py export.zip --model ollama --ollama-model qwen3
 ```
 
-Note: embeddings still use OpenRouter (text-embedding-3-small) for Supabase direct insert mode. Only the summarization step runs locally.
+Note: embeddings still use LiteLLM (text-embedding-3-small) for direct database insert mode. Only the summarization step runs locally.
 
 ## Cost Estimates
 
-All costs are via OpenRouter at current pricing.
+All costs are via LiteLLM at current pricing.
 
 | Component | Model | Cost |
 |-----------|-------|------|
@@ -203,8 +202,8 @@ These assume ~60% of conversations are filtered as trivial and ~2 thoughts per c
 **Issue: `conversations.json` not found in the export**
 Solution: ChatGPT exports come as a zip file. Make sure you've either (a) pointed the script at the zip file directly (`python import-chatgpt.py export.zip`), or (b) unzipped it and pointed at the directory. The script handles both formats automatically, including the multi-file format (`conversations-000.json`, `conversations-001.json`, etc.) used in large exports.
 
-**Issue: `OPENROUTER_API_KEY required` error**
-Solution: Make sure you've exported the environment variable in your current terminal session: `export OPENROUTER_API_KEY=sk-or-v1-...`. Environment variables don't persist between terminal windows.
+**Issue: `LITELLM_API_KEY required` error**
+Solution: Make sure you've exported the environment variable in your current terminal session: `export LITELLM_API_KEY=your-litellm-key`. Environment variables don't persist between terminal windows.
 
 **Issue: Import is very slow**
 Solution: Each conversation requires one LLM call (summarization) and 1-3 embedding calls (one per thought). For 500+ conversations, expect 15-30 minutes. Use `--limit 10` to test first, then run the full import. Progress prints to the console so you can see it working.
@@ -219,4 +218,4 @@ Solution: Conversations with fewer than 4 messages or fewer than 20 words of use
 Solution: Just run the script again pointing at your new export. The sync log (`chatgpt-sync-log.json`) tracks which conversations have been processed. Only new conversations will be imported. If you want to start fresh, delete `chatgpt-sync-log.json`.
 
 **Issue: `Failed to generate embedding` errors**
-Solution: Check that your OpenRouter API key is valid and has credits. Go to openrouter.ai/credits to verify your balance. The embedding model (text-embedding-3-small) costs $0.02 per million tokens — even a large import costs pennies.
+Solution: Check that your LiteLLM API key is valid and has credits. Verify your LiteLLM instance is running and the upstream API keys have credits. The embedding model (text-embedding-3-small) costs $0.02 per million tokens — even a large import costs pennies.

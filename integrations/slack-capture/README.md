@@ -1,17 +1,20 @@
 # Slack Capture Integration
 
+> [!WARNING]
+> **This guide was for the original Supabase deployment.** Slack capture is now built into the main Node.js MCP server in the self-hosted Docker architecture. See [Getting Started](../../docs/01-getting-started.md) Step 6 for the current setup process. The guide below is preserved for reference.
+
 ## What It Does
 
 Adds Slack as a quick-capture interface for your Open Brain. Type a thought in a Slack channel, it gets automatically embedded, classified, and stored — with a threaded confirmation reply showing how your message was categorized.
 
 ## Prerequisites
 
-- A working Open Brain setup (follow the [Getting Started guide](../../docs/01-getting-started.md) through Step 4 — you need the Supabase database, OpenRouter API key, and Supabase CLI installed)
+- A working Open Brain setup (follow the [Getting Started guide](../../docs/01-getting-started.md) through Step 4 — you need the database, LiteLLM API key, and Docker Compose stack running)
 - A Slack workspace (free tier works)
 
 ## Cost
 
-Slack is free. The Edge Function uses the same OpenRouter credits from your main Open Brain setup — embeddings cost ~$0.02 per million tokens, metadata extraction ~$0.15 per million input tokens. For 20 thoughts/day, expect roughly $0.10–0.30/month in API costs.
+Slack is free. The Edge Function uses the same LiteLLM credits from your main Open Brain setup — embeddings cost ~$0.02 per million tokens, metadata extraction ~$0.15 per million input tokens. For 20 thoughts/day, expect roughly $0.10–0.30/month in API costs.
 
 ---
 
@@ -24,7 +27,7 @@ SLACK CAPTURE -- CREDENTIAL TRACKER
 --------------------------------------
 
 FROM YOUR OPEN BRAIN SETUP
-  OpenRouter API key:    ____________
+  LiteLLM API key:    ____________
 
 SLACK WORKSPACE INFO
   Workspace name/URL:    ____________
@@ -100,7 +103,7 @@ supabase login
 supabase link --project-ref YOUR_PROJECT_REF
 ```
 
-Replace `YOUR_PROJECT_REF` with the project ref from your Supabase dashboard URL: `supabase.com/dashboard/project/THIS_PART`.
+Replace `YOUR_PROJECT_REF` with the project ref from your database directly (via psql or a database client) URL: `supabase.com/dashboard/project/THIS_PART`.
 
 ### Create the Function
 
@@ -115,17 +118,17 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const OPENROUTER_API_KEY = Deno.env.get("OPENROUTER_API_KEY")!;
+const LITELLM_API_KEY = Deno.env.get("LITELLM_API_KEY")!;
 const SLACK_BOT_TOKEN = Deno.env.get("SLACK_BOT_TOKEN")!;
 const SLACK_CAPTURE_CHANNEL = Deno.env.get("SLACK_CAPTURE_CHANNEL")!;
 
-const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
+const LITELLM_BASE = "https://your LiteLLM instance/api/v1";
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 async function getEmbedding(text: string): Promise<number[]> {
-  const r = await fetch(`${OPENROUTER_BASE}/embeddings`, {
+  const r = await fetch(`${LITELLM_BASE}/embeddings`, {
     method: "POST",
-    headers: { "Authorization": `Bearer ${OPENROUTER_API_KEY}`, "Content-Type": "application/json" },
+    headers: { "Authorization": `Bearer ${LITELLM_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({ model: "openai/text-embedding-3-small", input: text }),
   });
   const d = await r.json();
@@ -133,9 +136,9 @@ async function getEmbedding(text: string): Promise<number[]> {
 }
 
 async function extractMetadata(text: string): Promise<Record<string, unknown>> {
-  const r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+  const r = await fetch(`${LITELLM_BASE}/chat/completions`, {
     method: "POST",
-    headers: { "Authorization": `Bearer ${OPENROUTER_API_KEY}`, "Content-Type": "application/json" },
+    headers: { "Authorization": `Bearer ${LITELLM_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: "openai/gpt-4o-mini",
       response_format: { type: "json_object" },
@@ -220,13 +223,13 @@ Deno.serve(async (req: Request): Promise<Response> => {
 ### Set Your Secrets
 
 ```bash
-supabase secrets set OPENROUTER_API_KEY=your-openrouter-key-here
-supabase secrets set SLACK_BOT_TOKEN=xoxb-your-slack-bot-token-here
-supabase secrets set SLACK_CAPTURE_CHANNEL=C0your-channel-id-here
+set in your .env file: LITELLM_API_KEY=your-litellm-key-here
+set in your .env file: SLACK_BOT_TOKEN=xoxb-your-slack-bot-token-here
+set in your .env file: SLACK_CAPTURE_CHANNEL=C0your-channel-id-here
 ```
 
 Replace the values with:
-- Your OpenRouter API key from the main guide (Step 4)
+- Your LiteLLM API key from the main guide (Step 4)
 - Your Slack Bot OAuth Token from Step 2 above
 - Your Slack Channel ID from Step 1 above
 
@@ -235,7 +238,7 @@ Replace the values with:
 ### Deploy
 
 ```bash
-supabase functions deploy ingest-thought --no-verify-jwt
+docker compose up -d ingest-thought --no-verify-jwt
 ```
 
 > Copy the Edge Function URL immediately after deployment! It looks like: `https://YOUR_PROJECT_REF.supabase.co/functions/v1/ingest-thought`
@@ -273,7 +276,7 @@ People: Sarah
 Action items: Check in with Sarah about consulting plans
 ```
 
-Then open Supabase dashboard → Table Editor → thoughts. You should see one row with your message, an embedding, and metadata.
+Then open database directly (via psql or a database client) → database client → thoughts. You should see one row with your message, an embedding, and metadata.
 
 ---
 
@@ -297,7 +300,7 @@ You can now search for these thoughts using any MCP-connected AI (Claude Desktop
 Your Edge Function isn't deployed or isn't reachable. Run the deploy command again and check the output for errors.
 
 ```bash
-supabase functions deploy ingest-thought --no-verify-jwt
+docker compose up -d ingest-thought --no-verify-jwt
 ```
 
 ### Messages aren't triggering the function
@@ -306,14 +309,14 @@ Check Event Subscriptions — make sure both `message.channels` and `message.gro
 
 ### Slack creates duplicate database entries
 
-Slack retries webhook delivery if it doesn't get a response within 3 seconds. If your Edge Function takes longer than that (embedding + metadata extraction can take 4-5 seconds), Slack sends the event again, and you get two rows. This is a known edge case. The captures are identical, so it doesn't affect search — but if it bothers you, you can delete the duplicate row in the Supabase Table Editor.
+Slack retries webhook delivery if it doesn't get a response within 3 seconds. If your Edge Function takes longer than that (embedding + metadata extraction can take 4-5 seconds), Slack sends the event again, and you get two rows. This is a known edge case. The captures are identical, so it doesn't affect search — but if it bothers you, you can delete the duplicate row in the database (via psql or a database client).
 
 ### Function runs but nothing in the database
 
-Check Edge Function logs: Supabase dashboard → Edge Functions → ingest-thought → Logs. Most likely the OpenRouter key is wrong or has no credits.
+Check Edge Function logs: database directly (via psql or a database client) → Edge Functions → ingest-thought → Logs. Most likely the LiteLLM key is wrong or has no credits.
 
 ```bash
-supabase secrets list
+check your .env file
 ```
 
 ### No confirmation reply in Slack

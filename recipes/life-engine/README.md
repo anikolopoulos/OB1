@@ -30,12 +30,12 @@ This guide contains everything Claude Code needs to set up your entire Life Engi
 
 **Tell Claude Code:**
 
-> Read the Life Engine recipe at `~/path-to-ob1/recipes/life-engine/README.md` and set up my Life Engine end to end. I want to use **Telegram** *(or Discord)* as my messaging channel. Walk me through creating a bot if I don't have one yet. Install the channel plugin, configure it with my bot token, create the Life Engine skill file at `~/.claude/skills/life-engine/SKILL.md` using the full skill from `recipes/life-engine/life-engine-skill.md`, run the schema.sql in my Supabase SQL Editor, and configure permissions for unattended operation. Pause and walk me through any steps that need my phone or browser (bot creation, channel pairing). When everything is ready, test it with `/life-engine`.
+> Read the Life Engine recipe at `~/path-to-ob1/recipes/life-engine/README.md` and set up my Life Engine end to end. I want to use **Telegram** *(or Discord)* as my messaging channel. Walk me through creating a bot if I don't have one yet. Install the channel plugin, configure it with my bot token, create the Life Engine skill file at `~/.claude/skills/life-engine/SKILL.md` using the full skill from `recipes/life-engine/life-engine-skill.md`, run the schema.sql against my database, and configure permissions for unattended operation. Pause and walk me through any steps that need my phone or browser (bot creation, channel pairing). When everything is ready, test it with `/life-engine`.
 
 **What Claude Code will do:**
 1. Install and configure the Telegram channel plugin
 2. Create the skill file with the full Life Engine prompt
-3. Run the database schema in your Supabase project
+3. Run the database schema against your database
 4. Set up permissions for unattended operation
 5. Pause for you to complete Telegram pairing (requires your phone)
 6. Run a test cycle to confirm everything works
@@ -109,7 +109,7 @@ Before starting, you'll need:
 | Google Calendar MCP connected to Claude Code | ☐ |
 | Telegram account + Bot created via [@BotFather](https://t.me/BotFather) | ☐ |
 | [Bun](https://bun.sh/) installed (`bun --version` to check) | ☐ |
-| Supabase project with Open Brain MCP deployed | ☐ |
+| Docker Compose stack with Open Brain MCP deployed | ☐ |
 
 ### Credential Tracker
 
@@ -117,8 +117,7 @@ Copy this and fill it in as you go — you'll reference these values throughout 
 
 ```
 # Open Brain
-SUPABASE_PROJECT_URL=
-SUPABASE_SERVICE_KEY=
+DATABASE_URL=
 OB1_MCP_URL=
 
 # Telegram
@@ -153,8 +152,8 @@ TELEGRAM_BOT_TOKEN=
 │    ▼    ▼            ▼              ▼            │
 │  📅    🧠          💬           📊             │
 │  Google  Open Brain   Messaging    Life Engine   │
-│  Calendar (Supabase   Channel      Tables        │
-│  MCP      MCP)       (plugin)      (Supabase)    │
+│  Calendar  Database    Channel      Tables        │
+│  MCP      (PostgreSQL) (plugin)     (PostgreSQL)  │
 │                                                  │
 └─────────────────────────────────────────────────┘
 ```
@@ -449,7 +448,7 @@ Your Open Brain is already deployed as a remote MCP server from the Getting Star
 If not already connected:
 
 ```bash
-claude mcp add open-brain --transport http --url "https://YOUR_PROJECT_REF.supabase.co/functions/v1/open-brain-mcp?key=YOUR_ACCESS_KEY"
+claude mcp add open-brain --transport http --url "https://<your-domain>/mcp?key=<brain-key>"
 ```
 
 ### 3.2 Verify Open Brain Access
@@ -472,7 +471,7 @@ The Life Engine needs its own tables to track habits, moods, check-ins, and skil
 
 ### 4.1 Run the Schema
 
-Run the included [`schema.sql`](schema.sql) file in your Supabase SQL Editor. It contains the full schema with CHECK constraints, table comments, GRANT statements for `service_role`, performance indexes, and an auto-update trigger.
+Run the included [`schema.sql`](schema.sql) file against your database via `psql` or `docker compose exec postgres psql`. It contains the full schema with CHECK constraints, table comments, performance indexes, performance indexes, and an auto-update trigger.
 
 ✅ **Checkpoint:** Run the verification query at the bottom of `schema.sql` — you should see 5 tables (`life_engine_habits`, `life_engine_habit_log`, `life_engine_checkins`, `life_engine_briefings`, `life_engine_evolution`).
 
@@ -569,7 +568,7 @@ Use these MCP tools:
 - `reply` — Send text or files via Telegram channel
 - `react` — Acknowledge messages with emoji reactions
 - `edit_message` — Update a previously sent message
-- Supabase execute_sql — Query/insert Life Engine tables
+- PostgreSQL queries — Query/insert Life Engine tables
 
 ## Self-Improvement Protocol
 
@@ -678,7 +677,7 @@ claude --channels plugin:telegram@claude-plugins-official \
     mcp__google-calendar__gcal_list_events \
     mcp__google-calendar__gcal_get_event \
     mcp__open-brain__* \
-    mcp__supabase__*"
+    mcp__open-brain__*"
 ```
 
 Or persist them in `.claude/settings.json`:
@@ -693,7 +692,7 @@ Or persist them in `.claude/settings.json`:
       "mcp__google-calendar__gcal_list_events",
       "mcp__google-calendar__gcal_get_event",
       "mcp__open-brain__*",
-      "mcp__supabase__*"
+      "mcp__open-brain__*"
     ]
   }
 }
@@ -816,7 +815,7 @@ No two Life Engines look the same. Yours adapts to your schedule, your habits, y
 | **Plugin not loading** | Check `~/.claude/channels/telegram/.env` exists with your bot token. Try `/reload-plugins` in the session |
 | **Calendar not showing events** | Run `/mcp` and verify Google Calendar is connected |
 | **Open Brain returns nothing** | Test with: *"Search my Open Brain for [topic]"* — you may need more captured thoughts |
-| **Duplicate briefings** | The skill checks `life_engine_briefings` before sending. If duplicates occur, verify Supabase connection |
+| **Duplicate briefings** | The skill checks `life_engine_briefings` before sending. If duplicates occur, verify database connection |
 | **Claude suggests too many changes** | The self-improvement protocol limits to 1 suggestion per 7 days. Adjust in the skill if needed |
 
 ---
@@ -875,7 +874,7 @@ Claude Code communicates with external services through MCP (Model Context Proto
 - **Google Calendar MCP** — reads calendar events
 - **Open Brain MCP** — searches your knowledge base
 - **Messaging Channel** — sends and receives messages via Telegram or Discord plugin (`reply`, `react`, `edit_message`)
-- **Supabase MCP** — reads/writes Life Engine tables
+- **PostgreSQL** — reads/writes Life Engine tables directly
 
 All of these are configured in Claude Code's MCP settings and available to the skill automatically.
 
@@ -934,9 +933,8 @@ After setup, you'll have:
 
 | Service | Value | Where It's Used |
 |---------|-------|----------------|
-| Supabase Project URL | `https://xxx.supabase.co` | Open Brain MCP, Life Engine tables |
-| Supabase Service Key | `eyJ...` | Database access |
-| OB1 MCP URL | `https://xxx.supabase.co/functions/v1/open-brain-mcp?key=xxx` | Knowledge search |
+| DATABASE_URL | `postgresql://...` | Database access, Life Engine tables |
+| OB1 MCP URL | `https://<your-domain>/mcp?key=<brain-key>` | Knowledge search |
 | Telegram Bot Token | `123456:ABC...` | Telegram channel plugin |
 | Google Calendar | (OAuth via Claude Code) | Calendar events |
 

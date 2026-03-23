@@ -6,7 +6,7 @@ Your email is full of decisions, commitments, and context that your AI has never
 
 ## What It Does
 
-Pulls your Gmail history via the Gmail API and loads each email into Open Brain as a single thought. The script generates embeddings and extracts metadata (topics, people, action items) locally via OpenRouter, then inserts directly into Supabase with SHA-256 content fingerprint dedup.
+Pulls your Gmail history via the Gmail API and loads each email into Open Brain as a single thought. The script generates embeddings and extracts metadata (topics, people, action items) locally via LiteLLM, then inserts directly into PostgreSQL with SHA-256 content fingerprint dedup.
 
 **One email = one thought.** No chunking, no parent/child relationships. This aligns with how the OB1 community handles long content (truncate for embedding, store full content).
 
@@ -16,7 +16,7 @@ Pulls your Gmail history via the Gmail API and loads each email into Open Brain 
 - Deno runtime installed
 - Google Cloud project with Gmail API enabled
 - Gmail API OAuth credentials (Client ID + Client Secret)
-- OpenRouter API key (same one from your Open Brain setup)
+- LiteLLM API key (same one from your Open Brain setup)
 
 ## Credential Tracker
 
@@ -27,9 +27,8 @@ EMAIL HISTORY IMPORT -- CREDENTIAL TRACKER
 --------------------------------------
 
 FROM YOUR OPEN BRAIN SETUP
-  Supabase Project URL:  ____________
-  Supabase Service Key:  ____________
-  OpenRouter API Key:    ____________
+  DATABASE_URL:          ____________
+  LiteLLM API Key:       ____________
 
 GENERATED DURING SETUP
   Google Cloud Project ID:     ____________
@@ -46,9 +45,8 @@ GENERATED DURING SETUP
 3. **Set environment variables:**
 
    ```bash
-   export SUPABASE_URL=https://YOUR_REF.supabase.co
-   export SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-   export OPENROUTER_API_KEY=sk-or-v1-your-key
+   export DATABASE_URL=postgresql://user:pass@localhost:5432/open_brain
+   export LITELLM_API_KEY=your-litellm-key
    ```
 
 4. **First run — authenticate:**
@@ -84,13 +82,13 @@ deno run --allow-net --allow-read --allow-write --allow-env pull-gmail.ts --list
 | `--limit=` | `50` | Max emails to process |
 | `--dry-run` | off | Preview without ingesting |
 | `--list-labels` | off | List all Gmail labels and exit |
-| `--ingest-endpoint` | off | Use `INGEST_URL`/`INGEST_KEY` instead of Supabase direct insert |
+| `--ingest-endpoint` | off | Use `INGEST_URL`/`INGEST_KEY` instead of direct database insert |
 
 ### Ingestion modes
 
-**Default (Supabase direct insert)** — The script generates embeddings and extracts metadata via OpenRouter, then inserts directly into Supabase with content fingerprint dedup. Requires `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `OPENROUTER_API_KEY`. This matches the pattern used by the ChatGPT import and MCP server.
+**Default (direct insert)** — The script generates embeddings and extracts metadata via LiteLLM, then inserts directly into PostgreSQL with content fingerprint dedup. Requires `DATABASE_URL`, `LITELLM_API_KEY`. This matches the pattern used by the ChatGPT import and MCP server.
 
-**`--ingest-endpoint`** — POSTs to a custom Edge Function endpoint that handles embedding and metadata server-side. Requires `INGEST_URL` and `INGEST_KEY`. Use this if you have a custom ingest-thought function deployed.
+**`--ingest-endpoint`** — POSTs to a custom MCP server endpoint that handles embedding and metadata server-side. Requires `INGEST_URL` and `INGEST_KEY`. Use this if you have a custom ingest-thought function deployed.
 
 ## How It Works
 
@@ -98,9 +96,9 @@ deno run --allow-net --allow-read --allow-write --allow-env pull-gmail.ts --list
 2. **Extract** body (base64 decode, HTML-to-text, strip quoted replies and signatures)
 3. **Filter** out noise (no-reply senders, receipts, auto-generated, <10 words)
 4. **Deduplicate** via sync-log (tracks Gmail message IDs already imported)
-5. **Embed** content via OpenRouter (`text-embedding-3-small`)
+5. **Embed** content via LiteLLM (`text-embedding-3-small`)
 6. **Classify** via LLM (topics, type, people, action items)
-7. **Upsert** into Supabase with SHA-256 [content fingerprint](../../primitives/content-fingerprint-dedup/README.md) — re-running produces zero duplicates
+7. **Upsert** into PostgreSQL with SHA-256 [content fingerprint](../../primitives/content-fingerprint-dedup/README.md) — re-running produces zero duplicates
 
 ### What gets filtered out
 
@@ -121,8 +119,8 @@ Each imported email becomes one row in the `thoughts` table:
 
 **OAuth flow fails:** Make sure your redirect URI in Google Cloud Console is `http://localhost:3847/callback`.
 
-**No thoughts appear:** Check that `SUPABASE_SERVICE_ROLE_KEY` is your service role key (not the anon key). RLS blocks anon inserts.
+**No thoughts appear:** Check that `DATABASE_URL` is correct and the PostgreSQL container is running (`docker compose ps`).
 
 **Re-running imports the same emails:** The `sync-log.json` file tracks imported Gmail IDs. Delete it to re-import everything. Content fingerprints provide a second layer of dedup at the database level.
 
-**Embedding/metadata errors:** Verify your `OPENROUTER_API_KEY` has credits. The script calls OpenRouter for both embedding generation and metadata extraction.
+**Embedding/metadata errors:** Verify your `LITELLM_API_KEY` has credits. The script calls LiteLLM for both embedding generation and metadata extraction.

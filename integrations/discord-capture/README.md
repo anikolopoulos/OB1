@@ -11,8 +11,8 @@ A Discord bot that monitors designated channels and captures messages into Open 
 - Working Open Brain setup ([guide](../../docs/01-getting-started.md))
 - A Discord account with permission to add bots to your server
 - Discord Developer Portal access (free)
-- Supabase CLI installed (`npm i -g supabase`)
-- OpenRouter API key (for generating embeddings)
+- Docker Compose stack running
+- LiteLLM API key (for generating embeddings)
 
 ## Credential Tracker
 
@@ -23,7 +23,7 @@ DISCORD CAPTURE -- CREDENTIAL TRACKER
 --------------------------------------
 
 FROM YOUR OPEN BRAIN SETUP
-  OpenRouter API key:    ____________
+  LiteLLM API key:    ____________
 
 DISCORD INFO
   Server name:           ____________
@@ -45,11 +45,11 @@ GENERATED DURING SETUP
 1. Create a Discord application in the Developer Portal
 2. Create a bot and copy the bot token
 3. Invite the bot to your server with message read permissions
-4. Clone this folder to your Supabase project's `supabase/functions/` directory
-5. Configure environment variables (bot token, channel IDs to monitor, Supabase keys, OpenRouter key)
-6. Deploy the edge function: `supabase functions deploy discord-capture`
+4. Configure the bot in the Node.js MCP server (`deploy/app/`)
+5. Configure environment variables (bot token, channel IDs to monitor, DATABASE_URL, LiteLLM key)
+6. Restart the Docker stack: `docker compose up -d`
 7. Send a test message in a monitored channel
-8. Verify the thought was captured in your Supabase database
+8. Verify the thought was captured in your database
 
 ## Expected Outcome
 
@@ -67,8 +67,8 @@ You can search for anything you've captured from Discord using your Open Brain M
 **Issue: Bot is online but not capturing messages**
 Solution: Check that the bot has "Message Content Intent" enabled in the Developer Portal (Bot → Privileged Gateway Intents). Also verify the channel IDs in your config match the channels you're posting in.
 
-**Issue: Bot captures messages but they don't appear in Supabase**
-Solution: Check your edge function logs (`supabase functions logs discord-capture`). Most likely a missing or incorrect `SUPABASE_SERVICE_ROLE_KEY`.
+**Issue: Bot captures messages but they don't appear in the database**
+Solution: Check your server logs (`docker compose logs app`). Most likely a missing or incorrect `DATABASE_URL`.
 
 **Issue: Duplicate thoughts from edited messages**
 Solution: By default, message edits create a new thought. To update the existing thought instead, set `UPDATE_ON_EDIT=true` in your environment variables.

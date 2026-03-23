@@ -4,9 +4,9 @@
 
 <h1 align="center">Open Brain</h1>
 
-The infrastructure layer for your thinking. One database, one AI gateway, one chat channel. Any AI you use can plug in. No middleware, no SaaS chains, no Zapier.
+The infrastructure layer for your thinking. One self-hosted database, one AI gateway, one chat channel. Any AI you use can plug in. No middleware, no SaaS chains, no Zapier.
 
-This isn't a notes app. It's a database with vector search and an open protocol — built so that every AI tool you use shares the same persistent memory of you. Claude, ChatGPT, Cursor, Claude Code, whatever ships next month. One brain. All of them.
+This isn't a notes app. It's a PostgreSQL database with vector search and an open protocol — self-hosted on your own server, built so that every AI tool you use shares the same persistent memory of you. Claude, ChatGPT, Cursor, Claude Code, whatever ships next month. One brain. All of them.
 
 > Open Brain was created by [Nate B. Jones](https://natesnewsletter.substack.com/). Follow the [Substack](https://natesnewsletter.substack.com/) for updates, discussion, and the companion prompt pack. Join the [Discord](https://discord.gg/Cgh9WJEkeG) for real-time help and community.
 
@@ -18,7 +18,7 @@ https://github.com/user-attachments/assets/85208d73-112b-4204-82fd-d03b6c397a8b
 
 Never built an Open Brain? Start here:
 
-1. **[Setup Guide](docs/01-getting-started.md)** — Build the full system (database, AI gateway, Slack capture, MCP server) in about 45 minutes. No coding experience needed. Or watch the [video walkthrough](https://vimeo.com/1174979042/f883f6489a) (~27 min).
+1. **[Setup Guide](docs/01-getting-started.md)** — Deploy the full system (PostgreSQL + pgvector, MCP server, Slack capture) with Docker Compose in about 15 minutes. Or watch the [video walkthrough](https://vimeo.com/1174979042/f883f6489a) (~27 min, covers the original Supabase setup).
 2. **[AI-Assisted Setup](docs/04-ai-assisted-setup.md)** — Prefer building with Cursor, Claude Code, or another AI coding tool? Point it at this repo and go. Same system, different workflow.
 3. **[Companion Prompts](docs/02-companion-prompts.md)** — Five prompts that help you migrate your memories, discover use cases, and build the capture habit.
 4. **Then pick Extension 1** and start building.
@@ -68,14 +68,14 @@ Each recipe teaches you how to add a new capability to your Open Brain. Follow t
 
 ### [`/schemas`](schemas/) — Database extensions
 
-New tables, metadata schemas, and column extensions for your Supabase database. Drop them in alongside your existing `thoughts` table.
+New tables, metadata schemas, and column extensions for your PostgreSQL database. Drop them in alongside your existing `thoughts` table.
 - CRM contact layer (track people, interactions, and relationship context)
 - Taste preferences tracker
 - Reading list with rating metadata
 
 ### [`/dashboards`](dashboards/) — Frontend templates
 
-Host these on Vercel or Netlify, pointed at your Supabase backend. Instant UI for your brain.
+Host these on Vercel or Netlify, pointed at your PostgreSQL backend. Instant UI for your brain.
 - Personal knowledge dashboard
 - Weekly review view
 - Mobile-friendly capture UI
@@ -92,7 +92,7 @@ MCP server extensions, webhook receivers, and capture sources beyond Slack.
 1. Browse the category folders above
 2. Find what you want and open its folder
 3. Read the README — it has prerequisites, step-by-step instructions, and troubleshooting
-4. Most contributions involve running SQL against your Supabase database, deploying an edge function, or hosting frontend code. The README will tell you exactly what to do.
+4. Most contributions involve running SQL against your PostgreSQL database, installing an extension via the Admin API, or hosting frontend code. The README will tell you exactly what to do.
 
 ## Contributing
 

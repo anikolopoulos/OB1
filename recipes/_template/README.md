@@ -20,9 +20,9 @@ RECIPE NAME -- CREDENTIAL TRACKER
 --------------------------------------
 
 FROM YOUR OPEN BRAIN SETUP
-  Project URL:           ____________
-  Secret key:            ____________
-  OpenRouter API key:    ____________
+  Domain / IP:           ____________
+  DATABASE_URL:          ____________
+  LiteLLM API key:       ____________
 
 GENERATED DURING SETUP
   (list recipe-specific values: API keys, file paths, etc.)

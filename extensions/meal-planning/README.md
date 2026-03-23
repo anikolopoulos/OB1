@@ -50,7 +50,7 @@ A complete meal planning system with recipes, weekly meal plans, and auto-genera
 
 - Working Open Brain setup
 - Extensions 1-3 recommended (Extension 3's family_members table is referenced for cross-extension integration)
-- Supabase CLI installed and linked to your project
+- Docker Compose stack running
 - **Required reading:** [Row Level Security](../../primitives/rls/) primitive
 - **Required reading:** [Shared MCP Server](../../primitives/shared-mcp/) primitive
 
@@ -58,32 +58,24 @@ A complete meal planning system with recipes, weekly meal plans, and auto-genera
 
 You'll reference these values during setup. Copy this block into a text editor and fill it in as you go.
 
-> **Already have your Supabase credentials from the [Setup Guide](../../docs/01-getting-started.md)?** You just need the same Project URL and Secret key.
+> **Already have your credentials from the [Setup Guide](../../docs/01-getting-started.md)?** You just need the same MCP Access Key and domain.
 
 ```text
 MEAL PLANNING -- CREDENTIAL TRACKER
 --------------------------------------
 
-SUPABASE (from your Open Brain setup)
-  Project URL:           ____________
-  Secret key:            ____________
-  Project ref:           ____________
+OPEN BRAIN (from your Docker setup)
+  Domain / IP:                 ____________
+  DATABASE_URL:                ____________  (auto-configured in Docker)
 
 GENERATED DURING SETUP
-  Default User ID:             ____________
   MCP Access Key:              ____________  (same key for all extensions)
   MCP Server URL:              ____________
   MCP Connection URL:          ____________
 
-FOR SHARED SERVER
+FOR SHARED ACCESS
   Household Access Key:        ____________
-  Household Key (Supabase):    ____________
-  Shared Server URL:           ____________
   Shared Connection URL:       ____________
-
-NOTE: This extension uses TWO Edge Functions:
-  1. Primary (meal-planning-mcp) — your full access
-  2. Shared (meal-planning-shared-mcp) — household read + shopping list
 
 --------------------------------------
 ```
@@ -94,46 +86,24 @@ NOTE: This extension uses TWO Edge Functions:
 
 ### 1. Create the Database Schema
 
-Run the SQL in `schema.sql` against your Supabase database. This creates three RLS-enabled tables:
+Run the SQL in `schema.sql` against your database:
 
 ```bash
-# Using Supabase SQL Editor (recommended)
-# 1. Open https://supabase.com/dashboard/project/YOUR_PROJECT_ID/sql/new
-# 2. Paste the contents of schema.sql
-# 3. Click "Run"
+docker compose exec postgres psql -U postgres -d open_brain -f /path/to/schema.sql
+# Or copy-paste into psql or your database client
 ```
 
 **Important:** The schema includes Row Level Security policies. Make sure you understand what RLS does before proceeding (see the [RLS primitive](../../primitives/rls/)).
 
-### 2. Generate Your User ID
+### 2. Deploy the MCP Server
 
-The extension needs a user ID to scope your data. Generate a UUID and save it in your credential tracker:
-
-```bash
-# macOS / Linux
-uuidgen | tr '[:upper:]' '[:lower:]'
-
-# Or use any UUID generator — the value just needs to be unique to you
-```
-
-Set it as an environment variable for your Edge Function:
+Extension tools are registered in the Node.js MCP server. Place new tools in `deploy/app/src/mcp/tools/` and restart:
 
 ```bash
-supabase secrets set DEFAULT_USER_ID=your-generated-uuid-here
+docker compose up -d
 ```
 
-> If you already set `DEFAULT_USER_ID` for a previous extension, you can skip this step — all extensions share the same user ID.
-
-### 3. Deploy the Primary MCP Server
-
-Follow the [Deploy an Edge Function](../../primitives/deploy-edge-function/) guide using these values:
-
-| Setting | Value |
-|---------|-------|
-| Function name | `meal-planning-mcp` |
-| Download path | `extensions/meal-planning` |
-
-### 4. Connect to Your AI
+### 3. Connect to Your AI
 
 Follow the [Remote MCP Connection](../../primitives/remote-mcp/) guide to connect this extension to Claude Desktop, ChatGPT, Claude Code, or any other MCP client.
 
@@ -142,7 +112,7 @@ Follow the [Remote MCP Connection](../../primitives/remote-mcp/) guide to connec
 | Connector name | `Meal Planning` |
 | URL | Your **MCP Connection URL** from the credential tracker |
 
-### 5. Test the Primary Server
+### 4. Test the Primary Server
 
 Try these prompts in Claude Desktop:
 
@@ -158,14 +128,14 @@ Generate a shopping list for the week of March 17.
 
 The shared server gives household members limited access — they can view meal plans, browse recipes, and manage the shopping list without accessing your full Open Brain.
 
-### 1. Create a Household Member Role in Supabase
+### 1. Create a Household Member Role
 
 The RLS policies check for `auth.jwt() ->> 'role' = 'household_member'`. You need to create a JWT with this claim:
 
-**Option A: Create a separate Supabase user for your spouse**
-1. Go to Supabase Dashboard → Authentication → Users
+**Option A: Create a separate database user for your spouse**
+1. Create a new database user
 2. Create a new user with your spouse's email
-3. In the SQL Editor, grant the household_member role:
+3. Grant the household_member role:
 
 ```sql
 -- Create a custom claim for this user
@@ -179,26 +149,23 @@ WHERE email = 'spouse@example.com';
 ```
 
 **Option B: Use a shared service account**
-1. Create a new Supabase API key in Settings → API with limited permissions
+1. Create a new database role with limited permissions
 2. This is simpler but less granular than per-user authentication
 
 For this guide, we'll use Option B (shared service account).
 
-### 2. Deploy the Shared Edge Function
+### 2. Deploy the Shared MCP Server
 
-Follow the [Deploy an Edge Function](../../primitives/deploy-edge-function/) guide with these differences:
-
-| Setting | Value |
-|---------|-------|
-| Function name | `meal-planning-shared-mcp` |
-| Download path | `extensions/meal-planning` |
-| Server file | `shared-server.ts` (not `index.ts`) |
-| Access key secret name | `MCP_HOUSEHOLD_ACCESS_KEY` (not `MCP_ACCESS_KEY`) |
-
-You'll also need to set the household Supabase key:
+The shared server runs as part of the same Docker stack. Configure the shared access key in your `.env` file:
 
 ```bash
-supabase secrets set SUPABASE_HOUSEHOLD_KEY=household-scoped-api-key
+MCP_HOUSEHOLD_ACCESS_KEY=your-generated-shared-key
+```
+
+Then restart the stack:
+
+```bash
+docker compose up -d
 ```
 
 ### 3. Connect Your Household Member
@@ -258,7 +225,7 @@ For common issues (connection errors, 401s, deployment problems), see [Common Tr
 **RLS policies blocking queries on the shared server**
 - Verify your user has the `household_member` role set in `raw_app_meta_data`
 - Check the RLS policies match the schema.sql
-- Test with service role key first to confirm it's not an RLS issue
+- Test with direct database access first to confirm it's not an RLS issue
 
 **JSONB ingredient search not working**
 - The `search_recipes` tool uses `.cs.` (contains) operator for JSONB — ingredient names must match exactly (case-insensitive)

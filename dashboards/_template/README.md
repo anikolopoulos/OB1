@@ -21,8 +21,8 @@ DASHBOARD NAME -- CREDENTIAL TRACKER
 --------------------------------------
 
 FROM YOUR OPEN BRAIN SETUP
-  Project URL:           ____________
-  Anon key:              ____________
+  Domain / IP:           ____________
+  DATABASE_URL:          ____________
 
 HOSTING
   Deploy URL:            ____________
@@ -36,8 +36,7 @@ HOSTING
 2. Set your environment variables:
 
    ```text
-   SUPABASE_URL=your-project-url
-   SUPABASE_ANON_KEY=your-anon-key
+   DATABASE_URL=postgresql://user:pass@your-host:5432/open_brain
    ```
 
 3. Deploy to Vercel/Netlify
