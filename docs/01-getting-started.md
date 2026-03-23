@@ -8,7 +8,7 @@ About 15 minutes. Zero coding experience. One VPS, three Docker containers:
 
 - **PostgreSQL** (pgvector) — Your database, with schema-per-user isolation
 - **Node.js app** — Your MCP server + Admin API + Slack webhook handler
-- **Caddy** — Automatic HTTPS reverse proxy
+- **Reverse proxy** — Caddy (included in `deploy/`), Traefik, Nginx, or Cloudflare for HTTPS
 
 All AI access goes through **LiteLLM** (or any OpenAI-compatible endpoint) for embeddings and metadata extraction.
 
@@ -19,7 +19,7 @@ All AI access goes through **LiteLLM** (or any OpenAI-compatible endpoint) for e
 Before you start, make sure you have:
 
 - A **VPS** with Docker and Docker Compose installed (Hetzner CX31 recommended: 4 vCPU, 8 GB RAM, ~$7/month)
-- A **domain** pointed to your VPS (for automatic HTTPS via Caddy)
+- A **domain** pointed to your VPS (for HTTPS — via Caddy, Cloudflare, or your existing reverse proxy)
 - A **LiteLLM instance** (or any OpenAI-compatible API endpoint) for embeddings and chat — the default is `litellm.leadetic.com`
 
 > [!TIP]
@@ -86,12 +86,12 @@ METADATA_MODEL=gpt-4o-mini
 # Admin API
 ADMIN_API_KEY=<already filled by Step 1.3>
 
-# Domain (for Caddy TLS — set to your actual domain)
+# Domain (for the reverse proxy — set to your actual domain)
 DOMAIN=brain.yourdomain.com
 ```
 
 > [!IMPORTANT]
-> Set `DOMAIN` to the actual domain you pointed to this server. Caddy uses it to automatically provision a TLS certificate — no manual SSL setup required.
+> Set `DOMAIN` to the actual domain you pointed to this server. If using the included Caddy config, it will automatically provision a TLS certificate. If you're integrating into an existing reverse proxy (Traefik, Nginx, Cloudflare), configure routing there instead and the `DOMAIN` variable is used only for reference.
 
 > [!TIP]
 > You can leave `SLACK_SIGNING_SECRET` and `SLACK_BOT_TOKEN` empty for now. Step 6 covers Slack capture as an optional add-on.
@@ -102,7 +102,7 @@ DOMAIN=brain.yourdomain.com
 
 ![Step 2](https://img.shields.io/badge/Step_2-Start_the_Services-F4511E?style=for-the-badge)
 
-One command brings up your entire Open Brain stack — PostgreSQL with pgvector, the Node.js MCP server, and the Caddy reverse proxy. The database initializes itself automatically using the SQL scripts in `db/init/` — no manual SQL required.
+One command brings up your entire Open Brain stack — PostgreSQL with pgvector, the Node.js MCP server, and the reverse proxy. The database initializes itself automatically using the SQL scripts in `db/init/` — no manual SQL required.
 
 ```bash
 docker compose up -d
@@ -114,7 +114,7 @@ Wait about 30 seconds for PostgreSQL to initialize, then verify everything is ru
 docker compose ps
 ```
 
-You should see three services — `postgres`, `app`, and `caddy` — all with status `Up` or `healthy`.
+You should see your services — `postgres`, `app`, and your reverse proxy — all with status `Up` or `healthy`.
 
 Test the health endpoint:
 
@@ -128,10 +128,10 @@ curl http://localhost:3000/health
 > ```bash
 > docker compose logs postgres   # Database issues
 > docker compose logs app        # App startup issues
-> docker compose logs caddy      # TLS/domain issues
+> docker compose logs caddy      # TLS/domain issues (if using Caddy)
 > ```
 >
-> The most common issue is a missing or incorrect `DOMAIN` — Caddy will fail to start if it can't reach the domain or provision a certificate.
+> The most common issue is a missing or incorrect `DOMAIN`. If using Caddy, it will fail to start if it can't reach the domain or provision a certificate.
 
 Now test HTTPS from outside the server:
 
@@ -245,7 +245,7 @@ That's it. Start a new conversation, and Claude will have access to your Open Br
 One command:
 
 ```bash
-claude mcp add open-brain --transport streamable-http \
+claude mcp add open-brain --transport http \
   https://brain.yourdomain.com/mcp?key=your-brain-api-key
 ```
 
@@ -260,7 +260,9 @@ Every MCP client handles remote servers slightly differently. The server accepts
 
 **Option A: URL with key (easiest).** If your client has a field for a remote MCP server URL, paste the full MCP Connection URL including `?key=your-brain-api-key`. This works for any client that supports remote MCP without requiring headers.
 
-**Option B: mcp-remote bridge.** If your client only supports local stdio servers (configured via a JSON config file), use `mcp-remote` to bridge to the remote server. This requires Node.js installed.
+**Option B: mcp-remote bridge (required for Claude Desktop).** If your client only supports local stdio servers (configured via a JSON config file), use `mcp-remote` to bridge to the remote server. This requires Node.js installed. Claude Desktop uses this approach.
+
+Add to your client's MCP config (e.g., `claude_desktop_config.json` for Claude Desktop):
 
 ```json
 {
@@ -269,15 +271,14 @@ Every MCP client handles remote servers slightly differently. The server accepts
       "command": "npx",
       "args": [
         "mcp-remote",
-        "https://brain.yourdomain.com/mcp?key=${BRAIN_KEY}"
-      ],
-      "env": {
-        "BRAIN_KEY": "your-brain-api-key"
-      }
+        "https://brain.yourdomain.com/mcp?key=your-brain-api-key"
+      ]
     }
   }
 }
 ```
+
+No environment variables or certificates needed — `mcp-remote` handles the connection automatically. This works on any machine with Node.js/npx installed.
 
 </details>
 
@@ -427,7 +428,7 @@ Available extensions:
 
 **❌ Claude Desktop tools don't appear**
 
-Make sure you added the connector in Settings → Connectors (not by editing the JSON config file). Verify the connector is enabled for your conversation — click the "+" button at the bottom of the chat, then Connectors, and check that Open Brain is toggled on. If the connector was added but tools still don't show, try removing and re-adding it with the same URL.
+Make sure you added the `mcp-remote` entry in `claude_desktop_config.json` (Settings → Desktop app → Developer → Edit Config). After editing, fully quit Claude Desktop (Cmd+Q) and reopen. Check Settings → Desktop app → Developer — your server should appear in the list. If it shows "failed", click it to see the error logs. The most common issue is `npx` not being found — make sure Node.js is installed.
 
 **❌ ChatGPT doesn't use the Open Brain tools**
 
@@ -441,9 +442,9 @@ The brain key doesn't match what's in the database. Double-check that the `?key=
 
 Something else is already using port 80, 443, or 5432 on your VPS. Check with `ss -tlnp` and stop the conflicting service, or adjust the port mappings in `docker-compose.yml`.
 
-**❌ Caddy can't get a TLS certificate**
+**❌ HTTPS isn't working**
 
-Make sure your domain's A record points to the VPS IP address and has had time to propagate (usually a few minutes, sometimes up to an hour). Check Caddy's logs with `docker compose logs caddy`. The most common issue is the domain not resolving to the server yet.
+If using Caddy: make sure your domain's A record points to the VPS IP address and DNS has propagated. Check `docker compose logs caddy`. If using Cloudflare: ensure the proxy is enabled (orange cloud) and the origin server has a valid certificate. If using Traefik or Nginx: check your reverse proxy logs and TLS configuration.
 
 **❌ Search returns no results**
 
@@ -455,7 +456,7 @@ The metadata extraction is best-effort — the LLM is making its best guess with
 
 **❌ Health check passes locally but not via HTTPS**
 
-Run `curl http://localhost:3000/health` on the VPS to confirm the app itself is healthy. If that works but `https://your-domain/health` doesn't, the issue is Caddy or DNS. Check `docker compose logs caddy` and make sure your `DOMAIN` in `.env` matches your actual domain exactly.
+Run `curl http://localhost:3000/health` on the VPS to confirm the app itself is healthy. If that works but `https://your-domain/health` doesn't, the issue is your reverse proxy or DNS. Check the reverse proxy logs and make sure your domain resolves to the correct IP.
 
 </details>
 
