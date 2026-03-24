@@ -4,7 +4,7 @@ import { Hono } from 'hono';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { config } from './config.js';
 import { resolveBrain } from './auth/brain-resolver.js';
-import { withBrainSchema } from './db/with-schema.js';
+import { withBrainSchema, type QueryFn } from './db/with-schema.js';
 import { getEmbedding } from './ai/embeddings.js';
 import { extractMetadata } from './ai/metadata.js';
 import { createMcpServer } from './mcp/server-factory.js';
@@ -35,9 +35,9 @@ async function handleMcp(
   res: http.ServerResponse,
 ): Promise<void> {
   const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
-  const apiKey =
-    url.searchParams.get('key') ??
-    (req.headers['x-brain-key'] as string | undefined);
+  const rawHeader = req.headers['x-brain-key'];
+  const headerKey = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
+  const apiKey = url.searchParams.get('key') ?? headerKey;
 
   if (!apiKey) {
     res.writeHead(401, { 'Content-Type': 'application/json' });
@@ -52,27 +52,31 @@ async function handleMcp(
     return;
   }
 
-  await withBrainSchema(brain.schemaName, async (query) => {
-    const ctx: ToolContext = {
-      query,
-      getEmbedding,
-      extractMetadata,
-      schemaName: brain.schemaName,
-    };
+  // Create a query function that acquires/releases a DB connection per query.
+  // This avoids holding a pool client for the entire SSE stream lifetime.
+  const perQueryFn: QueryFn = (text, params) =>
+    withBrainSchema(brain.schemaName, (query) => query(text, params));
 
-    const server = await createMcpServer(ctx);
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined,
-    });
+  const ctx: ToolContext = {
+    query: perQueryFn,
+    getEmbedding,
+    extractMetadata,
+    schemaName: brain.schemaName,
+  };
 
-    await server.connect(transport);
-
-    try {
-      await transport.handleRequest(req, res);
-    } finally {
-      await server.close().catch(() => {});
-    }
+  const mcpServer = await createMcpServer(ctx);
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: undefined,
   });
+
+  await mcpServer.connect(transport);
+
+  try {
+    await transport.handleRequest(req, res);
+  } finally {
+    await mcpServer.close().catch(() => {});
+    await transport.close().catch(() => {});
+  }
 }
 
 // ── HTTP server: route /mcp to raw handler, everything else to Hono ──────────
@@ -81,7 +85,7 @@ const port = parseInt(config.PORT, 10);
 const server = http.createServer(async (req, res) => {
   const url = req.url ?? '/';
 
-  if (url.startsWith('/mcp')) {
+  if (url === '/mcp' || url.startsWith('/mcp/') || url.startsWith('/mcp?')) {
     try {
       await handleMcp(req, res);
     } catch (err) {
@@ -90,7 +94,12 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(500, { 'Content-Type': 'application/json' });
       }
       if (!res.writableEnded) {
-        res.end(JSON.stringify({ error: 'Internal server error' }));
+        if (res.headersSent) {
+          // SSE stream already started — close cleanly without injecting JSON
+          res.end();
+        } else {
+          res.end(JSON.stringify({ error: 'Internal server error' }));
+        }
       }
     }
     return;

@@ -11,6 +11,7 @@ interface SchemaCacheEntry {
 }
 
 const CACHE_TTL_MS = 60_000;
+const CACHE_MAX_ENTRIES = 100;
 const schemaTableCache = new Map<string, SchemaCacheEntry>();
 
 /** Invalidate the cached table list for a schema (call after installing extensions). */
@@ -24,6 +25,15 @@ async function getSchemaTables(schemaName: string): Promise<Set<string>> {
 
   if (cached && now - cached.fetchedAt < CACHE_TTL_MS) {
     return cached.tables;
+  }
+
+  // Evict stale entries to prevent unbounded memory growth
+  if (schemaTableCache.size >= CACHE_MAX_ENTRIES) {
+    for (const [key, entry] of schemaTableCache) {
+      if (now - entry.fetchedAt >= CACHE_TTL_MS) {
+        schemaTableCache.delete(key);
+      }
+    }
   }
 
   const result = await pool.query(
