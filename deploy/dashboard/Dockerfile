@@ -8,6 +8,9 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
+# SESSION_SECRET is validated at module init; provide a build-time placeholder
+# (the real secret is injected at runtime via the container environment)
+ENV SESSION_SECRET=build-time-placeholder-not-used-at-runtime-32chars
 RUN npm run build
 
 FROM node:22-alpine AS runner
