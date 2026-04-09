@@ -362,7 +362,7 @@ async function ingestThought(pool, content, metadata) {
       `INSERT INTO thoughts (content, embedding, metadata, content_fingerprint)
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (content_fingerprint) WHERE content_fingerprint IS NOT NULL
-       DO UPDATE SET metadata = EXCLUDED.metadata`,
+       DO UPDATE SET metadata = EXCLUDED.metadata || thoughts.metadata, updated_at = now()`,
       [content, JSON.stringify(embedding), JSON.stringify(metadata), fingerprint]
     );
     return { ok: true };
@@ -441,6 +441,8 @@ async function main() {
   let thoughtsGenerated = 0;
   let ingested = 0;
   let errors = 0;
+
+  try {
 
   for (const { file: actFile, category } of filtered) {
     const fileSize = statSync(actFile).size;
@@ -564,7 +566,9 @@ async function main() {
     }
   }
 
-  if (pool) await pool.end();
+  } finally {
+    if (pool) await pool.end();
+  }
 
   // ─── Summary ────────────────────────────────────────────────────────────
 

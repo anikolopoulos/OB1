@@ -206,17 +206,20 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
         return errorResult('Failed to capture thought: no row returned');
       }
 
-      const { is_new } = rows[0] as { id: string; fingerprint: string; is_new: boolean };
+      const { is_new } = rows[0] as { id: string; is_new: boolean };
       const meta = metadata as Record<string, unknown>;
-      let confirmation = is_new
-        ? `Captured as ${meta.type ?? 'thought'}`
-        : `Updated existing thought (duplicate content)`;
+      const parts: string[] = [
+        is_new
+          ? `Captured as ${meta.type ?? 'thought'}`
+          : `Updated existing thought (duplicate content)`,
+      ];
       if (Array.isArray(meta.topics) && meta.topics.length)
-        confirmation += ` — ${(meta.topics as string[]).join(', ')}`;
+        parts.push((meta.topics as string[]).join(', '));
       if (Array.isArray(meta.people) && meta.people.length)
-        confirmation += ` | People: ${(meta.people as string[]).join(', ')}`;
+        parts.push(`People: ${(meta.people as string[]).join(', ')}`);
       if (Array.isArray(meta.action_items) && meta.action_items.length)
-        confirmation += ` | Actions: ${(meta.action_items as string[]).join('; ')}`;
+        parts.push(`Actions: ${(meta.action_items as string[]).join('; ')}`);
+      const confirmation = parts.join(' — ');
 
       return textResult(confirmation);
     })

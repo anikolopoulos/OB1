@@ -36,7 +36,7 @@ export async function extractMetadata(
   try {
     return JSON.parse(content) as Record<string, unknown>;
   } catch {
-    console.warn('[metadata] Failed to parse LLM response as JSON, using fallback. Raw:', content.slice(0, 200));
+    console.error('[metadata] Failed to parse LLM response as JSON, using fallback. Raw:', content.slice(0, 200));
     return { ...FALLBACK_METADATA, _metadata_parse_failed: true };
   }
 }

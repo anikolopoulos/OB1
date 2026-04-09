@@ -344,11 +344,12 @@ async function processThought(
     let thoughtId: string | null = null;
 
     try {
+      const enrichedMetadata = { ...metadata, domain, source, status: "active" };
       const { rows } = await client.query<{ id: string }>(
-        `INSERT INTO thoughts (content, embedding, domain, status, source, metadata)
-         VALUES ($1, $2::vector, $3, 'active', $4, $5)
+        `INSERT INTO thoughts (content, embedding, metadata)
+         VALUES ($1, $2::vector, $3::jsonb)
          RETURNING id`,
-        [text, embeddingLiteral, domain, source, JSON.stringify(metadata)],
+        [text, embeddingLiteral, JSON.stringify(enrichedMetadata)],
       );
       thoughtId = rows[0]?.id ?? null;
       writes.push({ table: "thoughts", success: true });

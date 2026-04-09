@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { pool } from '../db/pool.js';
 import { withBrainSchema } from '../db/with-schema.js';
 import { getEmbedding } from '../ai/embeddings.js';
@@ -35,11 +35,6 @@ function verifySlackSignature(
   } catch {
     return false;
   }
-}
-
-function computeFingerprint(text: string): string {
-  const normalised = text.trim().replace(/\s+/g, ' ').toLowerCase();
-  return createHash('sha256').update(normalised, 'utf8').digest('hex');
 }
 
 // ── Slack event webhook handler ───────────────────────────────────────────────
@@ -121,6 +116,8 @@ export async function handleSlackEvent(c: Context): Promise<Response> {
   // Process the message asynchronously
   setImmediate(async () => {
     try {
+      let isNew = false;
+
       await withBrainSchema(schemaName, async (query) => {
         // Generate embedding and extract metadata in parallel
         const [embedding, metadata] = await Promise.all([
@@ -136,16 +133,11 @@ export async function handleSlackEvent(c: Context): Promise<Response> {
           slack_user: event.user,
         };
 
-        await query(
-          `INSERT INTO thoughts (content, content_fingerprint, embedding, metadata)
-           VALUES ($1, $2, $3, $4)
-           ON CONFLICT (content_fingerprint)
-              WHERE content_fingerprint IS NOT NULL
-              DO UPDATE SET
-                updated_at = now(),
-                metadata   = thoughts.metadata || EXCLUDED.metadata`,
-          [text, computeFingerprint(text), JSON.stringify(embedding), JSON.stringify(enrichedMetadata)],
+        const result = await query(
+          'SELECT upsert_thought($1, $2::vector, $3::jsonb) AS is_new',
+          [text, JSON.stringify(embedding), JSON.stringify(enrichedMetadata)],
         );
+        isNew = result.rows[0]?.is_new ?? true;
       });
 
       // Reply in Slack thread to confirm capture
@@ -161,10 +153,10 @@ export async function handleSlackEvent(c: Context): Promise<Response> {
           body: JSON.stringify({
             channel: channelId,
             thread_ts: slackTs,
-            text: 'Captured.',
+            text: isNew ? 'Captured.' : 'Already captured.',
           }),
-        }).catch(() => {
-          // Non-critical: swallow Slack API errors
+        }).catch((err) => {
+          console.warn('[slack] Failed to send confirmation reply:', err);
         });
       }
     } catch (err) {

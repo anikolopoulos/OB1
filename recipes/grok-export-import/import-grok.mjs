@@ -21,13 +21,6 @@ const LITELLM_BASE_URL = process.env.LITELLM_BASE_URL || "http://localhost:4000/
 const LITELLM_API_KEY = process.env.LITELLM_API_KEY;
 const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || "text-embedding-3-small";
 
-if (!DATABASE_URL || !LITELLM_API_KEY) {
-  console.error("Missing required env vars: DATABASE_URL, LITELLM_API_KEY");
-  process.exit(1);
-}
-
-const pool = new pg.Pool({ connectionString: DATABASE_URL });
-
 const args = process.argv.slice(2);
 const filePath = args.find((a) => !a.startsWith("--"));
 const dryRun = args.includes("--dry-run");
@@ -97,13 +90,13 @@ async function getEmbedding(text) {
   return data.data[0].embedding;
 }
 
-async function upsertThought(content, metadata, embedding, createdAt) {
+async function upsertThought(pool, content, metadata, embedding, createdAt) {
   const fingerprint = contentFingerprint(content);
   const result = await pool.query(
     `INSERT INTO thoughts (content, embedding, metadata, content_fingerprint, created_at)
      VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (content_fingerprint) WHERE content_fingerprint IS NOT NULL
-     DO UPDATE SET metadata = EXCLUDED.metadata, updated_at = now()
+     DO UPDATE SET metadata = EXCLUDED.metadata || thoughts.metadata, updated_at = now()
      RETURNING id, (xmax = 0) AS inserted`,
     [
       content,
@@ -111,7 +104,6 @@ async function upsertThought(content, metadata, embedding, createdAt) {
       JSON.stringify({
         ...metadata,
         source: "grok_import",
-        source_type: "grok_import",
       }),
       fingerprint,
       createdAt,
@@ -122,6 +114,11 @@ async function upsertThought(content, metadata, embedding, createdAt) {
 }
 
 async function main() {
+  if (!dryRun && (!DATABASE_URL || !LITELLM_API_KEY)) {
+    console.error("Missing required env vars: DATABASE_URL, LITELLM_API_KEY");
+    process.exit(1);
+  }
+
   console.log(`Grok Export Import`);
   console.log(`File: ${filePath}`);
   console.log(`Mode: ${dryRun ? "DRY RUN" : "LIVE IMPORT"}`);
@@ -138,43 +135,42 @@ async function main() {
   console.log(`Processing ${toProcess.length} (skip=${skip}, limit=${limit === Infinity ? "all" : limit})`);
   console.log();
 
-  let imported = 0, skipped = 0, errors = 0;
+  const pool = dryRun ? null : new pg.Pool({ connectionString: DATABASE_URL });
 
-  for (let i = 0; i < toProcess.length; i++) {
-    const conv = toProcess[i];
-    try {
-      const { title, createdAt, content } = normalizeConversation(conv);
-      if (content.trim().length < 100) { skipped++; continue; }
+  try {
+    let imported = 0, skipped = 0, errors = 0;
 
-      const truncated = content.length > 30000
-        ? content.substring(0, 30000) + "\n\n[... truncated]"
-        : content;
+    for (let i = 0; i < toProcess.length; i++) {
+      const conv = toProcess[i];
+      try {
+        const { title, createdAt, content } = normalizeConversation(conv);
+        if (content.trim().length < 100) { skipped++; continue; }
 
-      if (dryRun) {
-        console.log(`[${i + 1}/${toProcess.length}] Would import: "${title}" (${truncated.length} chars)`);
+        const truncated = content.length > 30000
+          ? content.substring(0, 30000) + "\n\n[... truncated]"
+          : content;
+
+        if (dryRun) {
+          console.log(`[${i + 1}/${toProcess.length}] Would import: "${title}" (${truncated.length} chars)`);
+          imported++;
+          continue;
+        }
+
+        const embedding = await getEmbedding(truncated);
+        const result = await upsertThought(pool, truncated, { title }, embedding, createdAt);
+        console.log(`[${i + 1}/${toProcess.length}] ${result.action}: #${result.thought_id} "${title}"`);
         imported++;
-        continue;
+      } catch (err) {
+        console.error(`[${i + 1}/${toProcess.length}] Error: ${err.message}`);
+        errors++;
       }
-
-      const embedding = await getEmbedding(truncated);
-      const result = await upsertThought(
-        truncated,
-        { title },
-        embedding,
-        createdAt
-      );
-      console.log(`[${i + 1}/${toProcess.length}] ${result.action}: #${result.thought_id} "${title}"`);
-      imported++;
-    } catch (err) {
-      console.error(`[${i + 1}/${toProcess.length}] Error: ${err.message}`);
-      errors++;
     }
+
+    console.log();
+    console.log(`Done! Imported: ${imported}, Skipped: ${skipped}, Errors: ${errors}`);
+  } finally {
+    if (pool) await pool.end();
   }
-
-  console.log();
-  console.log(`Done! Imported: ${imported}, Skipped: ${skipped}, Errors: ${errors}`);
-
-  await pool.end();
 }
 
 main().catch((err) => { console.error("Fatal error:", err); process.exit(1); });

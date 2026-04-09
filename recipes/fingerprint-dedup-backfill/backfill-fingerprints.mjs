@@ -58,25 +58,14 @@ const pool = new pg.Pool({ connectionString: DATABASE_URL });
 
 /**
  * Normalize text for fingerprint comparison.
- * Must match the SQL `normalize_for_fingerprint(text)` function exactly.
+ * Must match the SQL upsert_thought() normalization exactly:
+ *   lower(trim(regexp_replace(p_content, '\s+', ' ', 'g')))
  */
 function normalizeForFingerprint(text) {
-  let s = String(text ?? "")
+  return String(text ?? "")
     .trim()
     .replace(/\s+/g, " ")
     .toLowerCase();
-  if (!s) return "";
-
-  // Strip trailing punctuation
-  s = s.replace(/[.!?;:,]+$/, "");
-
-  // Strip possessives
-  s = s.replace(/['\u2019]s\b/g, "");
-
-  // Strip trailing 's' from last word if word length > 3
-  s = s.replace(/(\w{4,})s$/, "$1");
-
-  return s.trim();
 }
 
 function buildContentFingerprint(text) {
@@ -169,67 +158,69 @@ async function main() {
   console.log(`Batch size: ${BATCH_SIZE}`);
   console.log();
 
-  while (true) {
-    state.batches++;
-    process.stdout.write(
-      `Batch ${state.batches}: fetching from id>${state.cursorId}… `
-    );
-
-    let rows;
-    try {
-      rows = await fetchBatch(state.cursorId, BATCH_SIZE);
-    } catch (err) {
-      console.error("\n  Fetch error:", err.message, "— retrying in 5s…");
-      await new Promise((r) => setTimeout(r, 5000));
-      state.batches--;
-      continue;
-    }
-
-    if (!rows || rows.length === 0) {
-      console.log("(no rows) — Done.");
-      break;
-    }
-
-    console.log(`${rows.length} rows. Patching…`);
-
-    const updates = rows.map((row) => ({
-      id: row.id,
-      fingerprint: buildContentFingerprint(row.content ?? ""),
-    }));
-
-    const { done, duplicates, errors } = await patchBatch(updates);
-    state.totalDone += done;
-    state.totalDuplicates += duplicates;
-    state.totalErrors += errors;
-
-    const maxId = rows[rows.length - 1].id;
-    state.cursorId = typeof maxId === "number" ? maxId : maxId;
-    saveState(state);
-
-    const dupeStr =
-      duplicates > 0 ? `, ${duplicates} duplicates (skipped)` : "";
-    const errStr = errors > 0 ? `, ${errors} errors` : "";
-    console.log(
-      `  → ${done} patched${dupeStr}${errStr}. ` +
-        `Total: ${state.totalDone} patched, ${state.totalDuplicates} duplicates, ${state.totalErrors} errors. ` +
-        `Cursor: ${state.cursorId}`
-    );
-
-    await new Promise((r) => setTimeout(r, 150));
-  }
-
-  console.log();
-  console.log("=== COMPLETE ===");
-  console.log(`Total rows backfilled   : ${state.totalDone}`);
-  console.log(`Total duplicate skipped : ${state.totalDuplicates}`);
-  console.log(`Total other errors      : ${state.totalErrors}`);
-
   try {
-    fs.unlinkSync(STATE_FILE);
-    console.log("State file cleaned up.");
-  } catch {}
+    while (true) {
+      state.batches++;
+      process.stdout.write(
+        `Batch ${state.batches}: fetching from id>${state.cursorId}… `
+      );
 
-  await pool.end();
+      let rows;
+      try {
+        rows = await fetchBatch(state.cursorId, BATCH_SIZE);
+      } catch (err) {
+        console.error("\n  Fetch error:", err.message, "— retrying in 5s…");
+        await new Promise((r) => setTimeout(r, 5000));
+        state.batches--;
+        continue;
+      }
+
+      if (!rows || rows.length === 0) {
+        console.log("(no rows) — Done.");
+        break;
+      }
+
+      console.log(`${rows.length} rows. Patching…`);
+
+      const updates = rows.map((row) => ({
+        id: row.id,
+        fingerprint: buildContentFingerprint(row.content ?? ""),
+      }));
+
+      const { done, duplicates, errors } = await patchBatch(updates);
+      state.totalDone += done;
+      state.totalDuplicates += duplicates;
+      state.totalErrors += errors;
+
+      const maxId = rows[rows.length - 1].id;
+      state.cursorId = maxId;
+      saveState(state);
+
+      const dupeStr =
+        duplicates > 0 ? `, ${duplicates} duplicates (skipped)` : "";
+      const errStr = errors > 0 ? `, ${errors} errors` : "";
+      console.log(
+        `  → ${done} patched${dupeStr}${errStr}. ` +
+          `Total: ${state.totalDone} patched, ${state.totalDuplicates} duplicates, ${state.totalErrors} errors. ` +
+          `Cursor: ${state.cursorId}`
+      );
+
+      await new Promise((r) => setTimeout(r, 150));
+    }
+
+    console.log();
+    console.log("=== COMPLETE ===");
+    console.log(`Total rows backfilled   : ${state.totalDone}`);
+    console.log(`Total duplicate skipped : ${state.totalDuplicates}`);
+    console.log(`Total other errors      : ${state.totalErrors}`);
+
+    try {
+      fs.unlinkSync(STATE_FILE);
+      console.log("State file cleaned up.");
+    } catch {}
+  } finally {
+    await pool.end();
+  }
 }
 
 main().catch((err) => {

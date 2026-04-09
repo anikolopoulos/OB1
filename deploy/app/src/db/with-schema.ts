@@ -23,7 +23,8 @@ export async function withBrainSchema<T>(
     try {
       await client.query('RESET search_path');
       client.release();
-    } catch {
+    } catch (resetErr) {
+      console.error('[db] Failed to reset search_path, destroying connection:', resetErr);
       // If reset fails, destroy the connection rather than returning a
       // tainted client to the pool (cross-brain data leakage prevention).
       client.release(true);

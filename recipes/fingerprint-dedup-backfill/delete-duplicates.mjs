@@ -176,129 +176,131 @@ async function main() {
   );
   console.log(`Batch size: ${BATCH_SIZE}\n`);
 
-  while (true) {
-    state.batches++;
-    process.stdout.write(
-      `Batch ${state.batches}: fetching from id>${state.cursorId}… `
-    );
-
-    let rows;
-    try {
-      rows = await fetchBatch(state.cursorId, BATCH_SIZE);
-    } catch (err) {
-      console.error("\n  Fetch error:", err.message, "— retrying in 5s…");
-      await new Promise((r) => setTimeout(r, 5000));
-      state.batches--;
-      continue;
-    }
-
-    if (!rows || rows.length === 0) {
-      console.log("(no rows) — Done.");
-      break;
-    }
-
-    console.log(`${rows.length} rows`);
-
-    const rowsWithFp = rows.map((row) => ({
-      id: row.id,
-      fingerprint: buildFingerprint(row.content),
-    }));
-
-    const allHashes = rowsWithFp.map((r) => r.fingerprint);
-    let existingSet;
-    try {
-      existingSet = await checkFingerprintsExist(allHashes);
-    } catch (err) {
-      console.error(
-        "  Check-exists error:",
-        err.message,
-        "— retrying in 5s…"
+  try {
+    while (true) {
+      state.batches++;
+      process.stdout.write(
+        `Batch ${state.batches}: fetching from id>${state.cursorId}… `
       );
-      await new Promise((r) => setTimeout(r, 5000));
-      state.batches--;
-      continue;
-    }
 
-    const duplicateRows = rowsWithFp.filter((r) =>
-      existingSet.has(r.fingerprint)
-    );
-    const orphanRows = rowsWithFp.filter(
-      (r) => !existingSet.has(r.fingerprint)
-    );
-
-    process.stdout.write(
-      `  ${duplicateRows.length} duplicates, ${orphanRows.length} orphans. `
-    );
-
-    if (REPORT_ONLY) {
-      state.totalWouldDelete += duplicateRows.length;
-      console.log(`(would delete ${duplicateRows.length})`);
-    } else {
-      // Delete duplicates
-      let deletedThisBatch = 0;
-      if (duplicateRows.length > 0) {
-        try {
-          deletedThisBatch = await deleteIds(
-            duplicateRows.map((r) => r.id)
-          );
-          state.totalDeleted += deletedThisBatch;
-        } catch (err) {
-          state.totalErrors++;
-          console.error("\n  DELETE error:", err.message);
-        }
+      let rows;
+      try {
+        rows = await fetchBatch(state.cursorId, BATCH_SIZE);
+      } catch (err) {
+        console.error("\n  Fetch error:", err.message, "— retrying in 5s…");
+        await new Promise((r) => setTimeout(r, 5000));
+        state.batches--;
+        continue;
       }
 
-      // Patch genuine orphans
-      let patchedThisBatch = 0;
-      for (const { id, fingerprint } of orphanRows) {
-        try {
-          await patchFingerprint(id, fingerprint);
-          patchedThisBatch++;
-          state.totalPatched++;
-        } catch (err) {
-          state.totalErrors++;
-          console.warn(
-            `  PATCH orphan error id=${id}:`,
-            err.message.slice(0, 120)
-          );
-        }
+      if (!rows || rows.length === 0) {
+        console.log("(no rows) — Done.");
+        break;
       }
+
+      console.log(`${rows.length} rows`);
+
+      const rowsWithFp = rows.map((row) => ({
+        id: row.id,
+        fingerprint: buildFingerprint(row.content),
+      }));
+
+      const allHashes = rowsWithFp.map((r) => r.fingerprint);
+      let existingSet;
+      try {
+        existingSet = await checkFingerprintsExist(allHashes);
+      } catch (err) {
+        console.error(
+          "  Check-exists error:",
+          err.message,
+          "— retrying in 5s…"
+        );
+        await new Promise((r) => setTimeout(r, 5000));
+        state.batches--;
+        continue;
+      }
+
+      const duplicateRows = rowsWithFp.filter((r) =>
+        existingSet.has(r.fingerprint)
+      );
+      const orphanRows = rowsWithFp.filter(
+        (r) => !existingSet.has(r.fingerprint)
+      );
+
+      process.stdout.write(
+        `  ${duplicateRows.length} duplicates, ${orphanRows.length} orphans. `
+      );
+
+      if (REPORT_ONLY) {
+        state.totalWouldDelete += duplicateRows.length;
+        console.log(`(would delete ${duplicateRows.length})`);
+      } else {
+        // Delete duplicates
+        let deletedThisBatch = 0;
+        if (duplicateRows.length > 0) {
+          try {
+            deletedThisBatch = await deleteIds(
+              duplicateRows.map((r) => r.id)
+            );
+            state.totalDeleted += deletedThisBatch;
+          } catch (err) {
+            state.totalErrors++;
+            console.error("\n  DELETE error:", err.message);
+          }
+        }
+
+        // Patch genuine orphans
+        let patchedThisBatch = 0;
+        for (const { id, fingerprint } of orphanRows) {
+          try {
+            await patchFingerprint(id, fingerprint);
+            patchedThisBatch++;
+            state.totalPatched++;
+          } catch (err) {
+            state.totalErrors++;
+            console.warn(
+              `  PATCH orphan error id=${id}:`,
+              err.message.slice(0, 120)
+            );
+          }
+        }
+
+        console.log(
+          `Deleted ${deletedThisBatch}, patched ${patchedThisBatch}.`
+        );
+      }
+
+      // Advance cursor
+      const maxId = rows[rows.length - 1].id;
+      state.cursorId = maxId;
+      saveState(state);
 
       console.log(
-        `Deleted ${deletedThisBatch}, patched ${patchedThisBatch}.`
+        `  Totals: deleted=${state.totalDeleted}, patched=${state.totalPatched}, ` +
+          `would-delete=${state.totalWouldDelete}, errors=${state.totalErrors}. ` +
+          `Cursor: ${state.cursorId}`
       );
+
+      await new Promise((r) => setTimeout(r, 200));
     }
 
-    // Advance cursor
-    const maxId = rows[rows.length - 1].id;
-    state.cursorId = maxId;
-    saveState(state);
+    console.log();
+    console.log("=== COMPLETE ===");
+    if (REPORT_ONLY) {
+      console.log(`Total rows that would be deleted: ${state.totalWouldDelete}`);
+      console.log(`\nRun with --delete to actually remove them.`);
+    } else {
+      console.log(`Total rows deleted  : ${state.totalDeleted}`);
+      console.log(`Total rows patched  : ${state.totalPatched}`);
+      console.log(`Total errors        : ${state.totalErrors}`);
+    }
 
-    console.log(
-      `  Totals: deleted=${state.totalDeleted}, patched=${state.totalPatched}, ` +
-        `would-delete=${state.totalWouldDelete}, errors=${state.totalErrors}. ` +
-        `Cursor: ${state.cursorId}`
-    );
-
-    await new Promise((r) => setTimeout(r, 200));
+    try {
+      fs.unlinkSync(STATE_FILE);
+    } catch {}
+  } finally {
+    await pool.end();
   }
-
-  console.log();
-  console.log("=== COMPLETE ===");
-  if (REPORT_ONLY) {
-    console.log(`Total rows that would be deleted: ${state.totalWouldDelete}`);
-    console.log(`\nRun with --delete to actually remove them.`);
-  } else {
-    console.log(`Total rows deleted  : ${state.totalDeleted}`);
-    console.log(`Total rows patched  : ${state.totalPatched}`);
-    console.log(`Total errors        : ${state.totalErrors}`);
-  }
-
-  try {
-    fs.unlinkSync(STATE_FILE);
-  } catch {}
-
-  await pool.end();
 }
 
 main().catch((err) => {

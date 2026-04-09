@@ -386,7 +386,7 @@ def insert_thought(conn, content: str, embedding: list[float] | None, metadata: 
                     VALUES (%s, %s, %s::vector, %s::jsonb, %s)
                     ON CONFLICT (content_fingerprint) WHERE content_fingerprint IS NOT NULL
                     DO UPDATE SET updated_at = now(),
-                                 metadata = thoughts.metadata || EXCLUDED.metadata
+                                 metadata = EXCLUDED.metadata || thoughts.metadata
                 """, (
                     content,
                     fingerprint,
@@ -749,70 +749,74 @@ def main():
     secrets_skipped = 0
     successful_paths = {}  # note_path → first insert timestamp
 
-    for i, thought in enumerate(all_thoughts):
-        # Scan for secrets before embedding or inserting
-        if not args.no_secret_scan:
-            secret_match = scan_for_secrets(thought['content'])
-            if secret_match:
-                secrets_skipped += 1
-                title = thought['metadata'].get('title', '?')
-                section = thought['metadata'].get('section', '')
-                location = f"{title} > {section}" if section else title
-                print(f"  SKIPPED (secret detected): {location} — {secret_match}", flush=True)
-                continue
+    try:
+        for i, thought in enumerate(all_thoughts):
+            # Scan for secrets before embedding or inserting
+            if not args.no_secret_scan:
+                secret_match = scan_for_secrets(thought['content'])
+                if secret_match:
+                    secrets_skipped += 1
+                    title = thought['metadata'].get('title', '?')
+                    section = thought['metadata'].get('section', '')
+                    location = f"{title} > {section}" if section else title
+                    print(f"  SKIPPED (secret detected): {location} — {secret_match}", flush=True)
+                    continue
 
-        # Generate embedding (skip if --no-embed)
-        embedding = None
-        if not args.no_embed:
-            embedding = generate_embedding(thought['content'], litellm_base_url,
-                                           litellm_api_key, embedding_model)
-            if not embedding:
-                embed_failures += 1
+            # Generate embedding (skip if --no-embed)
+            embedding = None
+            if not args.no_embed:
+                embedding = generate_embedding(thought['content'], litellm_base_url,
+                                               litellm_api_key, embedding_model)
+                if not embedding:
+                    embed_failures += 1
+                else:
+                    time.sleep(0.15)  # rate-limit between embedding calls
+
+            # Insert into PostgreSQL (fingerprint enables DB-level dedup)
+            result = insert_thought(
+                conn=conn,
+                content=thought['content'],
+                embedding=embedding,
+                metadata=thought['metadata'],
+                created_at=thought.get('created_at'),
+                fingerprint=thought.get('fingerprint'),
+            )
+
+            if result == "inserted":
+                inserted += 1
+                consecutive_failures = 0
+                if thought['note_path'] not in successful_paths:
+                    successful_paths[thought['note_path']] = datetime.now(tz=timezone.utc).isoformat()
+            elif result == "duplicate":
+                duplicates += 1
+                consecutive_failures = 0
+                if thought['note_path'] not in successful_paths:
+                    successful_paths[thought['note_path']] = datetime.now(tz=timezone.utc).isoformat()
             else:
-                time.sleep(0.15)  # rate-limit between embedding calls
+                insert_failures += 1
+                consecutive_failures += 1
+                if consecutive_failures >= 10:
+                    print(f"\n  Aborting: {consecutive_failures} consecutive insert failures.",
+                          file=sys.stderr, flush=True)
+                    print("  Check your PostgreSQL connection and try again.", file=sys.stderr)
+                    break
 
-        # Insert into PostgreSQL (fingerprint enables DB-level dedup)
-        result = insert_thought(
-            conn=conn,
-            content=thought['content'],
-            embedding=embedding,
-            metadata=thought['metadata'],
-            created_at=thought.get('created_at'),
-            fingerprint=thought.get('fingerprint'),
-        )
+            # Progress
+            if (i + 1) % 10 == 0 or i == len(all_thoughts) - 1:
+                parts = [f"inserted: {inserted}"]
+                if duplicates:
+                    parts.append(f"skipped: {duplicates}")
+                if insert_failures:
+                    parts.append(f"failed: {insert_failures}")
+                print(f"  Progress: {i + 1}/{len(all_thoughts)} ({', '.join(parts)})",
+                      flush=True)
 
-        if result == "inserted":
-            inserted += 1
-            consecutive_failures = 0
-            if thought['note_path'] not in successful_paths:
-                successful_paths[thought['note_path']] = datetime.now(tz=timezone.utc).isoformat()
-        elif result == "duplicate":
-            duplicates += 1
-            consecutive_failures = 0
-            if thought['note_path'] not in successful_paths:
-                successful_paths[thought['note_path']] = datetime.now(tz=timezone.utc).isoformat()
-        else:
-            insert_failures += 1
-            consecutive_failures += 1
-            if consecutive_failures >= 10:
-                print(f"\n  Aborting: {consecutive_failures} consecutive insert failures.",
-                      file=sys.stderr, flush=True)
-                print("  Check your PostgreSQL connection and try again.", file=sys.stderr)
-                break
-
-        # Progress
-        if (i + 1) % 10 == 0 or i == len(all_thoughts) - 1:
-            parts = [f"inserted: {inserted}"]
-            if duplicates:
-                parts.append(f"skipped: {duplicates}")
-            if insert_failures:
-                parts.append(f"failed: {insert_failures}")
-            print(f"  Progress: {i + 1}/{len(all_thoughts)} ({', '.join(parts)})",
-                  flush=True)
-
-        # Rate limit courtesy
-        if (i + 1) % 50 == 0:
-            time.sleep(1)
+            # Rate limit courtesy
+            if (i + 1) % 50 == 0:
+                time.sleep(1)
+    finally:
+        if conn:
+            conn.close()
 
     print()
     print(f"=== IMPORT COMPLETE ===")
@@ -845,9 +849,6 @@ def main():
 
     save_sync_log(recipe_dir, sync_log)
     print(f"  Sync log saved ({len(notes_log)} notes tracked)")
-
-    if conn:
-        conn.close()
 
     if args.report:
         _write_report(all_thoughts, filtered, vault_root, args, skip_reasons,

@@ -15,6 +15,10 @@ DECLARE
     v_id          UUID;
     v_is_new      BOOLEAN;
 BEGIN
+    IF p_content IS NULL OR trim(p_content) = '' THEN
+        RAISE EXCEPTION 'upsert_thought: content must not be NULL or empty';
+    END IF;
+
     -- Normalise then SHA-256
     v_fingerprint := encode(sha256(convert_to(
         lower(trim(regexp_replace(p_content, '\s+', ' ', 'g'))),
@@ -26,7 +30,7 @@ BEGIN
     ON CONFLICT (content_fingerprint) WHERE content_fingerprint IS NOT NULL
     DO UPDATE SET
         updated_at = now(),
-        metadata   = thoughts.metadata || EXCLUDED.metadata
+        metadata   = EXCLUDED.metadata || thoughts.metadata
     RETURNING thoughts.id,
               (xmax = 0) -- true when INSERT, false when UPDATE (conflict)
     INTO v_id, v_is_new;

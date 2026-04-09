@@ -616,7 +616,7 @@ def ingest_thought_postgres(conn, content, metadata_dict, created_at=None):
                 VALUES (%s, %s, %s::vector, %s::jsonb, %s)
                 ON CONFLICT (content_fingerprint) WHERE content_fingerprint IS NOT NULL
                 DO UPDATE SET updated_at = now(),
-                             metadata = thoughts.metadata || EXCLUDED.metadata
+                             metadata = EXCLUDED.metadata || thoughts.metadata
             """, (
                 content,
                 fingerprint,
@@ -1049,25 +1049,25 @@ def main():
 
     sync_log = load_sync_log()
 
-    # Process conversations
+    # Process conversations and memory, ensuring connection cleanup
     conv_stats = None
-    if args.type in ("conversations", "both"):
-        print(f"Extracting conversations from {xlsx_path}...")
-        conversations = extract_conversations(str(xlsx_path))
-        print(f"Found {len(conversations)} conversations.")
-        conversations.sort(key=lambda c: c.get("created", ""))
-        conv_stats = process_conversations(conversations, conn, sync_log, args)
-
-    # Process memory
     mem_stats = None
-    if args.type in ("memory", "both"):
-        print(f"\nExtracting memory from {xlsx_path}...")
-        memories = extract_memory_rows(str(xlsx_path))
-        print(f"Found {len(memories)} memory entries.")
-        mem_stats = process_memory(memories, conn, sync_log, args)
+    try:
+        if args.type in ("conversations", "both"):
+            print(f"Extracting conversations from {xlsx_path}...")
+            conversations = extract_conversations(str(xlsx_path))
+            print(f"Found {len(conversations)} conversations.")
+            conversations.sort(key=lambda c: c.get("created", ""))
+            conv_stats = process_conversations(conversations, conn, sync_log, args)
 
-    if conn:
-        conn.close()
+        if args.type in ("memory", "both"):
+            print(f"\nExtracting memory from {xlsx_path}...")
+            memories = extract_memory_rows(str(xlsx_path))
+            print(f"Found {len(memories)} memory entries.")
+            mem_stats = process_memory(memories, conn, sync_log, args)
+    finally:
+        if conn:
+            conn.close()
 
     # ─── Summary ─────────────────────────────────────────────────────────────
 

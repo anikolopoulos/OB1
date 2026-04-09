@@ -9,7 +9,7 @@
   "version": "1.0.0",
   "requires": {
     "open_brain": true,
-    "services": ["OpenRouter"],
+    "services": ["LiteLLM", "PostgreSQL"],
     "tools": ["Node.js 18+"]
   },
   "tags": ["google", "takeout", "import", "search-history", "gmail", "maps", "youtube", "chrome", "activity"],

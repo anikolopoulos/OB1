@@ -26,6 +26,7 @@ export function withErrorHandler<T>(
     try {
       return await fn(args, extra);
     } catch (err: unknown) {
+      console.error('[mcp-tool] Unhandled error:', err);
       const message = err instanceof Error ? err.message : String(err);
       return {
         content: [{ type: 'text' as const, text: `Error: ${message}` }],
