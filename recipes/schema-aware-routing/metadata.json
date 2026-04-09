@@ -9,16 +9,16 @@
   "version": "1.0.0",
   "requires": {
     "open_brain": true,
-    "services": ["OpenAI-compatible API (LLM + embeddings)"],
-    "tools": ["Node.js 18+ or Deno"]
+    "services": ["LiteLLM (LLM + embeddings)", "PostgreSQL"],
+    "tools": ["Node.js 18+"]
   },
   "tags": [
     "ingestion",
     "routing",
     "schema",
     "slack",
-    "supabase",
-    "llm",
+    "postgresql",
+    "litellm",
     "metadata-extraction",
     "people-graph",
     "action-items"
@@ -26,5 +26,5 @@
   "difficulty": "intermediate",
   "estimated_time": "45 minutes",
   "created": "2026-03-19",
-  "updated": "2026-03-19"
+  "updated": "2026-04-09"
 }

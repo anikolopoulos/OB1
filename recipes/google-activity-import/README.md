@@ -21,8 +21,8 @@ Takes your Google Takeout data export, filters out noise (passive visits, trivia
 - Working Open Brain setup ([guide](../../docs/01-getting-started.md))
 - Your Google Takeout data export (see Step 1 below)
 - Node.js 18+
-- Your Supabase project URL and service role key (from your credential tracker)
-- OpenRouter API key (for LLM summarization and embedding generation)
+- Your PostgreSQL `DATABASE_URL` (from your Open Brain setup)
+- LiteLLM API key (for LLM summarization and embedding generation)
 
 ## Credential Tracker
 
@@ -33,9 +33,8 @@ GOOGLE ACTIVITY IMPORT -- CREDENTIAL TRACKER
 --------------------------------------
 
 FROM YOUR OPEN BRAIN SETUP
-  Supabase Project URL:  ____________
-  Supabase Secret key:   ____________
-  OpenRouter API key:    ____________
+  DATABASE_URL:          ____________
+  LiteLLM API key:       ____________
 
 FILE LOCATION
   Path to Takeout folder:  ____________
@@ -83,17 +82,23 @@ cd recipes/google-activity-import
 
 Or copy the files (`import-google-activity.mjs`, `package.json`) into any working directory.
 
-### 3. Set your environment variables
+### 3. Install dependencies
 
 ```bash
-export SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
-export SUPABASE_SERVICE_ROLE_KEY=your-service-role-key-here
-export OPENROUTER_API_KEY=sk-or-v1-your-key-here
+npm install
 ```
 
-All three values come from your credential tracker. You can also copy `.env.example` to `.env` and fill it in, then run `export $(cat .env | xargs)`.
+### 4. Set your environment variables
 
-### 4. Do a dry run first
+```bash
+export DATABASE_URL=postgresql://ob1:password@localhost:5432/ob1
+export LITELLM_BASE_URL=http://localhost:4000/v1
+export LITELLM_API_KEY=your-litellm-api-key
+```
+
+All values come from your credential tracker. You can also copy `.env.example` to `.env` and fill it in, then run `export $(cat .env | xargs)`.
+
+### 5. Do a dry run first
 
 ```bash
 node import-google-activity.mjs ./path/to/Takeout/My\ Activity --dry-run --limit 5
@@ -101,7 +106,7 @@ node import-google-activity.mjs ./path/to/Takeout/My\ Activity --dry-run --limit
 
 This parses, filters, and summarizes 5 activity-days without writing anything to your database. Review the output to see what would be imported.
 
-### 5. Run the full import
+### 6. Run the full import
 
 ```bash
 node import-google-activity.mjs ./path/to/Takeout/My\ Activity
@@ -114,18 +119,27 @@ The script will:
 4. Group remaining entries by day
 5. Summarize each day's activity into 1-3 standalone thoughts via LLM
 6. Generate a vector embedding for each thought
-7. Insert each thought into your `thoughts` table
+7. Upsert each thought into your `thoughts` table (deduplication via SHA-256 content fingerprint)
 
 Progress prints to the console. A sync log (`google-activity-sync-log.json`) tracks which days have been imported, so you can safely re-run the script after future Takeout exports without duplicating data.
 
-### 6. Verify in your database
+### 7. Verify in your database
 
-Open your Supabase dashboard → Table Editor → `thoughts`. You should see new rows with:
+Connect to your PostgreSQL database and check the `thoughts` table:
+
+```sql
+SELECT content, metadata FROM thoughts
+WHERE metadata->>'source' = 'google_activity'
+ORDER BY created_at DESC
+LIMIT 10;
+```
+
+You should see new rows with:
 - `content`: prefixed with `[Google Search: 2024-06-15]` (or Gmail, Maps, etc.)
 - `metadata`: includes `source: "google_activity"`, category, date, entry count
 - `embedding`: a 1536-dimension vector
 
-### 7. Test a search
+### 8. Test a search
 
 In any MCP-connected AI (Claude Desktop, ChatGPT, etc.), ask:
 
@@ -163,9 +177,9 @@ The filtering is aggressive by design — most Google activity is noise. The scr
 | YouTube | Searches, substantive watching | Short clips, passive visits |
 | Chrome | Page titles ≥15 chars | Very short titles |
 
-**Stage 2: Day grouping & summarization** — Surviving entries are grouped by date. Each day goes to an LLM (gpt-4o-mini via OpenRouter) with a tuned prompt. The LLM extracts 1-3 standalone thoughts per day, focusing on research patterns, decisions, and interests. Days with only trivial activity get empty summaries.
+**Stage 2: Day grouping & summarization** — Surviving entries are grouped by date. Each day goes to an LLM (gpt-4o-mini via LiteLLM) with a tuned prompt. The LLM extracts 1-3 standalone thoughts per day, focusing on research patterns, decisions, and interests. Days with only trivial activity get empty summaries.
 
-**Stage 3: Ingestion** — Each thought gets a vector embedding (text-embedding-3-small, 1536 dimensions) and is inserted into your `thoughts` table with metadata linking back to the source category and date.
+**Stage 3: Ingestion** — Each thought gets a vector embedding (text-embedding-3-small, 1536 dimensions) and is upserted into your `thoughts` table with a SHA-256 content fingerprint for deduplication.
 
 ### Deduplication
 
@@ -173,7 +187,7 @@ The sync log (`google-activity-sync-log.json`) stores a hash of each processed d
 - New days that weren't in the previous export
 - Days whose content has changed (new entries appended)
 
-This means you can download a fresh Takeout export every few months and re-run — only new activity gets imported.
+Content fingerprints provide a second layer of dedup at the database level.
 
 ## Options Reference
 
@@ -199,41 +213,21 @@ node import-google-activity.mjs ./Takeout/My\ Activity --categories Search,Gmail
 
 ### Importing without LLM (free, private)
 
-If you don't want to send your activity data to OpenRouter for summarization, use `--raw` mode:
+If you don't want to send your activity data to LiteLLM for summarization, use `--raw` mode:
 
 ```bash
 node import-google-activity.mjs ./Takeout/My\ Activity --raw
 ```
 
-This inserts the grouped daily entries as-is (e.g., "Google Search activity for 2024-06-15: Searched for X, Searched for Y..."). Embeddings still use OpenRouter. The thoughts won't be as clean, but your raw activity data stays private.
-
-## Cost Estimates
-
-All costs are via OpenRouter at current pricing.
-
-| Component | Model | Cost |
-|-----------|-------|------|
-| Summarization | gpt-4o-mini | ~$0.15/1M input + $0.60/1M output |
-| Embeddings | text-embedding-3-small | ~$0.02/1M tokens |
-
-**Typical costs by Takeout size:**
-
-| Takeout period | Activity-days | Thoughts | Est. cost |
-|----------------|---------------|----------|-----------|
-| 1 year | ~365 | ~200 | ~$0.01 |
-| 3 years | ~1,000 | ~600 | ~$0.04 |
-| 5 years | ~1,800 | ~1,200 | ~$0.07 |
-| All time (10yr+) | ~3,500 | ~2,500 | ~$0.15 |
-
-These assume ~60% of days are filtered as trivial and ~1.5 thoughts per day on average.
+This inserts the grouped daily entries as-is (e.g., "Google Search activity for 2024-06-15: Searched for X, Searched for Y..."). Embeddings still use LiteLLM. The thoughts won't be as clean, but your raw activity data stays private.
 
 ## Troubleshooting
 
 **Issue: "No MyActivity.json files found"**
 Solution: Make sure you selected **JSON** format (not HTML) when creating your Google Takeout export. The script looks for `MyActivity.json` files inside category subdirectories. If you see `MyActivity.html` files instead, re-create your Takeout with JSON format selected.
 
-**Issue: `OPENROUTER_API_KEY required` error**
-Solution: Make sure you've exported the environment variable in your current terminal session: `export OPENROUTER_API_KEY=sk-or-v1-...`. Environment variables don't persist between terminal windows.
+**Issue: `LITELLM_API_KEY required` error**
+Solution: Make sure you've exported the environment variable in your current terminal session: `export LITELLM_API_KEY=your-key`. Environment variables don't persist between terminal windows.
 
 **Issue: Import is very slow**
 Solution: Each activity-day requires one LLM call (summarization) and 1-3 embedding calls. For 1,000+ days, expect 30-60 minutes. Use `--limit 10` to test first, then `--after 2024-01-01` to process recent activity, and expand the date range in later runs.
@@ -245,7 +239,10 @@ Solution: This is expected. The LLM is deliberately selective — days with only
 Solution: Just run the script again pointing at your new export. The sync log tracks which days have been processed by content hash. Only new or changed days will be imported. If you want to start completely fresh, delete `google-activity-sync-log.json`.
 
 **Issue: `Failed to generate embedding` errors**
-Solution: Check that your OpenRouter API key is valid and has credits. Go to openrouter.ai/credits to verify your balance. The embedding model (text-embedding-3-small) costs $0.02 per million tokens — even a large import costs pennies.
+Solution: Check that your `LITELLM_API_KEY` is valid and your LiteLLM instance is running. Verify `LITELLM_BASE_URL` is reachable: `curl $LITELLM_BASE_URL/models`.
+
+**Issue: No thoughts appear in database**
+Solution: Check that `DATABASE_URL` is correct and the PostgreSQL container is running (`docker compose ps`). Test the connection: `psql $DATABASE_URL -c "SELECT count(*) FROM thoughts;"`.
 
 **Issue: Want to import a category not in the default list**
 Solution: Use `--categories` to specify any category that has a `MyActivity.json` file. For example: `--categories "Gemini Apps,Google Analytics"`. Run without `--categories` first using `--dry-run` to see all available categories.

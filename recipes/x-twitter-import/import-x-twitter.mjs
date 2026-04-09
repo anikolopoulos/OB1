@@ -17,25 +17,25 @@
  *       └── grok-conversations.js
  */
 
-import { createClient } from "@supabase/supabase-js";
+import pg from "pg";
 import { createHash } from "crypto";
-import { readFile, readdir, stat } from "fs/promises";
-import { join, basename } from "path";
+import { readFile, stat } from "fs/promises";
+import { join } from "path";
 import { config } from "dotenv";
 
 config();
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || "openai/text-embedding-3-small";
+const DATABASE_URL = process.env.DATABASE_URL;
+const LITELLM_BASE_URL = process.env.LITELLM_BASE_URL || "http://localhost:4000/v1";
+const LITELLM_API_KEY = process.env.LITELLM_API_KEY;
+const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || "text-embedding-3-small";
 
-if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !OPENROUTER_API_KEY) {
-  console.error("Missing required env vars: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, OPENROUTER_API_KEY");
+if (!DATABASE_URL || !LITELLM_API_KEY) {
+  console.error("Missing required env vars: DATABASE_URL, LITELLM_API_KEY");
   process.exit(1);
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+const pool = new pg.Pool({ connectionString: DATABASE_URL });
 
 const args = process.argv.slice(2);
 const dirPath = args.find((a) => !a.startsWith("--"));
@@ -53,7 +53,7 @@ if (!dirPath) {
 
 function contentFingerprint(text) {
   const normalized = text.trim().replace(/\s+/g, " ").toLowerCase();
-  return createHash("sha256").update(normalized).digest("hex");
+  return createHash("sha256").update(normalized, "utf8").digest("hex");
 }
 
 function parseTwitterJsFile(content) {
@@ -76,10 +76,10 @@ async function findDataDir(dir) {
 
 async function getEmbedding(text) {
   const truncated = text.length > 8000 ? text.substring(0, 8000) : text;
-  const response = await fetch("https://openrouter.ai/api/v1/embeddings", {
+  const response = await fetch(`${LITELLM_BASE_URL}/embeddings`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+      Authorization: `Bearer ${LITELLM_API_KEY}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ model: EMBEDDING_MODEL, input: truncated }),
@@ -93,21 +93,27 @@ async function getEmbedding(text) {
 }
 
 async function upsertThought(content, metadata, embedding, createdAt, sourceType) {
-  const { data, error } = await supabase.rpc("upsert_thought", {
-    p_content: content,
-    p_payload: {
-      type: "reference",
-      source_type: sourceType,
-      importance: 2,
-      quality_score: 40,
-      sensitivity_tier: "standard",
-      metadata: { ...metadata, source: "x_twitter_import", source_type: sourceType },
-      embedding: JSON.stringify(embedding),
-      created_at: createdAt,
-    },
-  });
-  if (error) throw new Error(`upsert_thought failed: ${error.message}`);
-  return data;
+  const fingerprint = contentFingerprint(content);
+  const result = await pool.query(
+    `INSERT INTO thoughts (content, embedding, metadata, content_fingerprint, created_at)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (content_fingerprint) WHERE content_fingerprint IS NOT NULL
+     DO UPDATE SET metadata = EXCLUDED.metadata, updated_at = now()
+     RETURNING id, (xmax = 0) AS inserted`,
+    [
+      content,
+      JSON.stringify(embedding),
+      JSON.stringify({
+        ...metadata,
+        source: "x_twitter_import",
+        source_type: sourceType,
+      }),
+      fingerprint,
+      createdAt,
+    ]
+  );
+  const row = result.rows[0];
+  return { thought_id: row.id, action: row.inserted ? "inserted" : "updated" };
 }
 
 // ── Tweet Processing ─────────────────────────────────────────────────────
@@ -283,7 +289,6 @@ async function main() {
       const truncated = item.content.length > 30000
         ? item.content.substring(0, 30000) + "\n\n[... truncated]"
         : item.content;
-      const fingerprint = contentFingerprint(truncated);
 
       if (dryRun) {
         console.log(`[${i + 1}/${toProcess.length}] Would import: "${item.title}" (${truncated.length} chars)`);
@@ -294,7 +299,7 @@ async function main() {
       const embedding = await getEmbedding(truncated);
       const result = await upsertThought(
         truncated,
-        { title: item.title, content_fingerprint: fingerprint },
+        { title: item.title },
         embedding,
         item.createdAt,
         item.sourceType
@@ -309,6 +314,8 @@ async function main() {
 
   console.log();
   console.log(`Done! Imported: ${imported}, Skipped: ${skipped}, Errors: ${errors}`);
+
+  await pool.end();
 }
 
 main().catch((err) => { console.error("Fatal error:", err); process.exit(1); });

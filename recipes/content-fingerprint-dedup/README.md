@@ -38,7 +38,7 @@ Input: "  Hello   World  "
 
 ### Step 1: Add the fingerprint column
 
-Run this in your Supabase SQL Editor:
+Connect to your PostgreSQL instance via `psql` or your preferred SQL client (pgAdmin, TablePlus, DBeaver, etc.) and run:
 
 ```sql
 ALTER TABLE thoughts ADD COLUMN content_fingerprint TEXT;
@@ -78,7 +78,7 @@ END;
 $$ LANGUAGE plpgsql;
 ```
 
-Now call it from your Edge Function or import script:
+Now call it from your import script or directly via `psql`:
 
 ```sql
 SELECT upsert_thought('My thought content', '{"metadata": {"source": "chatgpt"}}'::jsonb);

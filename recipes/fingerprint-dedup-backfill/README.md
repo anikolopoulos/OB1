@@ -37,8 +37,7 @@ FINGERPRINT DEDUP BACKFILL -- CREDENTIAL TRACKER
 --------------------------------------
 
 FROM YOUR OPEN BRAIN SETUP
-  Supabase URL:            ____________
-  Service role key:        ____________
+  DATABASE_URL:            ____________
 
 --------------------------------------
 ```
@@ -49,16 +48,22 @@ FROM YOUR OPEN BRAIN SETUP
 
 Copy the recipe folder to your local machine.
 
-**2. Configure credentials**
+**2. Install dependencies**
 
-Copy `.env.example` to `.env` and fill in your Supabase credentials:
+```bash
+npm install
+```
+
+**3. Configure credentials**
+
+Copy `.env.example` to `.env` and fill in your database connection string:
 
 ```bash
 cp .env.example .env
-# Edit .env with your Supabase URL and service role key
+# Edit .env with your DATABASE_URL
 ```
 
-**3. Run the backfill**
+**4. Run the backfill**
 
 This computes and patches fingerprints for all rows where `content_fingerprint` is NULL:
 
@@ -68,7 +73,7 @@ node backfill-fingerprints.mjs
 
 The script processes rows in batches of 1000, saving progress to `backfill-state.json` after each batch. If interrupted, it resumes from where it left off.
 
-**4. Generate a duplicate report**
+**5. Generate a duplicate report**
 
 Before deleting anything, see what would be removed:
 
@@ -78,7 +83,7 @@ node delete-duplicates.mjs --report-only
 
 This scans remaining NULL-fingerprint rows, computes their fingerprints, and reports how many are duplicates of existing fingerprinted rows — without deleting anything.
 
-**5. Remove duplicates (when ready)**
+**6. Remove duplicates (when ready)**
 
 Once you've reviewed the report and are satisfied:
 
@@ -127,14 +132,17 @@ This means "The dog's toys." and "the dogs toy" produce the same fingerprint.
 
 ## Troubleshooting
 
-**Issue: Script reports many "duplicate" PATCH errors (409 / 23505)**
-Solution: This means the computed fingerprint already exists on another row. The backfill script counts these but skips them — this is expected behavior. Run the cleanup script afterward to remove the duplicates.
+**Issue: Script reports unique constraint violations during backfill**
+Solution: This means the computed fingerprint already exists on another row. The backfill script counts these as duplicates but skips updating them — this is expected behavior. Run the cleanup script afterward to remove the duplicates.
 
 **Issue: Script hangs or times out on large tables**
 Solution: The scripts use cursor-based pagination and save state after each batch. If a request times out, the script retries after 5 seconds. For very large tables (100K+), expect the backfill to take 10-30 minutes.
 
 **Issue: `content_fingerprint` column doesn't exist**
 Solution: Apply the [Content Fingerprint Dedup](../../primitives/content-fingerprint-dedup/) primitive first. The column must exist before running these scripts.
+
+**Issue: Database connection errors**
+Solution: Verify `DATABASE_URL` is correct and PostgreSQL is running. Test with: `psql $DATABASE_URL -c "SELECT 1;"`.
 
 **Issue: Want to reset and start over**
 Solution: Delete the state file (`backfill-state.json` or `cleanup-state.json`) and run the script again. It will start from the beginning.

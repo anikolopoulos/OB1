@@ -35,9 +35,8 @@ No special configuration is needed for any of these — the script handles them 
 
 - Working Open Brain setup ([guide](../../docs/01-getting-started.md))
 - Python 3.10+
-- Your Supabase project URL and API key
-- OpenRouter API key (for embeddings and optional LLM chunking)
-- Recommended: add a `content_fingerprint` column and unique index for database-level dedup (see [Re-running and Deduplication](#re-running-and-deduplication))
+- Your `DATABASE_URL` (from your credential tracker)
+- LiteLLM API key (for embeddings and optional LLM chunking)
 
 ## Credential Tracker
 
@@ -48,9 +47,8 @@ OBSIDIAN VAULT IMPORT -- CREDENTIAL TRACKER
 --------------------------------------
 
 FROM YOUR OPEN BRAIN SETUP
-  Supabase Project URL:  ____________
-  Supabase API key:      ____________
-  OpenRouter API key:    ____________
+  DATABASE_URL:          ____________
+  LiteLLM API key:       ____________
 
 FILE LOCATION
   Path to Obsidian vault:  ____________
@@ -72,7 +70,7 @@ FILE LOCATION
    ```bash
    cp .env.example .env
    ```
-   Edit `.env` and fill in your Supabase URL, API key, and OpenRouter API key. Find your Supabase credentials in the dashboard under Settings → API.
+   Edit `.env` and fill in your `DATABASE_URL` and `LITELLM_API_KEY`. The `DATABASE_URL` is the PostgreSQL connection string from your Open Brain setup (e.g., `postgresql://ob1:password@localhost:5432/ob1`).
 
 4. **Run a dry run first** to see what would be imported:
    ```bash
@@ -84,14 +82,14 @@ FILE LOCATION
    ```bash
    python import-obsidian.py /path/to/your/vault --limit 20 --verbose
    ```
-   The script runs a preflight check before any import — it verifies your Supabase connection and OpenRouter API key before spending time on chunking or embeddings.
+   The script runs a preflight check before any import — it verifies your PostgreSQL connection and LiteLLM API key before spending time on chunking or embeddings.
 
 6. **Run the full import** once you're satisfied:
    ```bash
    python import-obsidian.py /path/to/your/vault --verbose
    ```
 
-7. **Verify in Supabase.** Open your Supabase dashboard → Table Editor → `thoughts`. You should see rows with:
+7. **Verify in your database.** Query the `thoughts` table via `psql` or any database client. You should see rows with:
    - `content` — your note text with an `[Obsidian: Title | Folder]` prefix
    - `embedding` — a 1536-dimensional vector
    - `metadata` — JSON with source, title, folder, tags, date, and wikilinks
@@ -142,7 +140,7 @@ python import-obsidian.py /path/to/vault --skip-folders "Archive,Files,patterns"
 The script scans each thought for potential secrets before embedding or inserting. Thoughts containing API keys, tokens, passwords, or connection strings are skipped and logged — they never reach your database.
 
 Detected patterns include:
-- API keys (OpenAI, OpenRouter, AWS, GitHub, Supabase)
+- API keys (OpenAI, LiteLLM, AWS, GitHub)
 - JWT tokens
 - Private key blocks
 - Connection strings with embedded credentials
@@ -156,13 +154,13 @@ The script uses a hybrid chunking strategy to turn notes into atomic thoughts:
 
 1. **Short notes** (under 500 words) become a single thought.
 2. **Notes with headings** are split at `## ` boundaries — each section becomes one thought.
-3. **Long sections** (over 1000 words) are sent to an LLM (gpt-4o-mini via OpenRouter) which distills them into 1-3 standalone thoughts.
+3. **Long sections** (over 1000 words) are sent to an LLM (gpt-4o-mini via LiteLLM) which distills them into 1-3 standalone thoughts.
 
 Use `--no-llm` to skip step 3 if you want to avoid LLM costs. Heading-based splitting still works.
 
 ## Cost Estimate
 
-Costs depend on vault size and whether LLM chunking is enabled. Embeddings use `text-embedding-3-small` and LLM chunking uses `gpt-4o-mini`, both via OpenRouter.
+Costs depend on vault size and whether LLM chunking is enabled. Embeddings use `text-embedding-3-small` and LLM chunking uses `gpt-4o-mini`, both via LiteLLM.
 
 | Vault size | Embeddings only (`--no-llm`) | With LLM chunking |
 |------------|------------------------------|---------------------|
@@ -177,13 +175,11 @@ Use `--dry-run` to see how many thoughts your vault would generate before commit
 ## Rate Limiting
 
 The script self-throttles to respect upstream API limits:
-- **150ms delay** between embedding API calls to avoid flooding OpenRouter
-- **1-second pause** every 50 inserts to give Supabase breathing room
+- **150ms delay** between embedding API calls to avoid flooding LiteLLM
+- **1-second pause** every 50 inserts to give PostgreSQL breathing room
 - **Exponential backoff** on 429/5xx errors (2s → 4s → 8s, up to 3 retries)
 
 For large vaults (1000+ notes), use `--limit` to import in batches if you encounter rate limit errors. The sync log ensures you can resume where you left off.
-
-See also: [Graceful Boundaries](https://github.com/snapsynapse/graceful-boundaries) — a spec for how services communicate operational limits to humans and agents.
 
 ## Re-running and Deduplication
 
@@ -191,14 +187,7 @@ The script prevents duplicates at two levels:
 
 **Local sync log** (`obsidian-sync-log.json`) — tracks content hashes of imported notes. On re-runs, unchanged notes are skipped entirely (saving embedding API calls). Modified notes are re-imported, and new notes are added.
 
-**Database-level fingerprinting** — each thought includes a `content_fingerprint` (SHA-256 of normalized content). If your `thoughts` table has a unique index on `content_fingerprint`, the insert automatically skips duplicates even if the sync log is deleted or a different machine imports overlapping content. To add the index:
-
-```sql
-CREATE UNIQUE INDEX IF NOT EXISTS thoughts_content_fingerprint_idx
-  ON thoughts (content_fingerprint);
-```
-
-Without the index, the fingerprint is stored but dedup relies on the sync log only.
+**Database-level fingerprinting** — each thought includes a `content_fingerprint` (SHA-256 of normalized content). The insert uses an upsert pattern with `ON CONFLICT (content_fingerprint)` so duplicates are silently skipped even if the sync log is deleted or a different machine imports overlapping content.
 
 To do a clean re-import, delete `obsidian-sync-log.json` and remove the imported thoughts from your `thoughts` table (filter by `metadata->>'source' = 'obsidian'`).
 
@@ -224,8 +213,14 @@ You can filter by source to find only Obsidian-imported thoughts: search with `{
 **Issue: `python-frontmatter` not found**
 Solution: Make sure you ran `pip install -r requirements.txt`. If using a virtual environment, activate it first.
 
+**Issue: `DATABASE_URL required` error**
+Solution: Make sure you've set the environment variable or filled in your `.env` file. The value should be a full PostgreSQL connection string: `postgresql://ob1:password@localhost:5432/ob1`.
+
+**Issue: `LITELLM_API_KEY required for embeddings` error**
+Solution: Set `LITELLM_API_KEY` in your `.env` file, or use `--no-embed` to skip embeddings.
+
 **Issue: Import is slow on large vaults (1000+ notes)**
-Solution: Embedding generation is the bottleneck — each note requires an API call. Use `--limit` to import in batches, or `--no-llm` to skip LLM chunking and reduce API calls. The script rate-limits itself to avoid hitting OpenRouter quotas.
+Solution: Embedding generation is the bottleneck — each note requires an API call. Use `--limit` to import in batches, or `--no-llm` to skip LLM chunking and reduce API calls.
 
 **Issue: Some notes are skipped unexpectedly**
 Solution: Run with `--verbose` to see which notes are filtered and why. Common reasons: notes under 50 words (adjust with `--min-words`), notes in a `Templates/` folder, or notes already in the sync log. Check `--dry-run` output first.
@@ -234,10 +229,10 @@ Solution: Run with `--verbose` to see which notes are filtered and why. Common r
 Solution: The parser handles encoding errors gracefully — problematic files are skipped with a warning. If you see many parse errors, your vault may contain non-UTF-8 files. The script will continue processing the rest.
 
 **Issue: Duplicate thoughts after re-running**
-Solution: The sync log prevents duplicates on re-runs. For stronger protection, add the `content_fingerprint` unique index (see "Re-running and Deduplication" above) — this catches duplicates even if the sync log is deleted or another machine imports the same content. To clean up existing duplicates, filter by `metadata->>'source' = 'obsidian'` in the Supabase Table Editor.
+Solution: The sync log prevents duplicates on re-runs. The `content_fingerprint` upsert provides an additional safety net — duplicate content is silently skipped at the database level even without the sync log. To clean up existing duplicates, query by `metadata->>'source' = 'obsidian'` in your database.
 
 **Issue: Import aborts after "10 consecutive insert failures"**
-Solution: The script stops early if 10 inserts fail in a row to avoid wasting embedding credits. Check your Supabase connection, verify the `thoughts` table exists, and confirm your API key is correct. The preflight check catches most of these, but a connection drop mid-import can also trigger this.
+Solution: The script stops early if 10 inserts fail in a row to avoid wasting embedding credits. Check your PostgreSQL connection (`DATABASE_URL`), verify the `thoughts` table exists, and confirm your credentials are correct.
 
 **Issue: Notes flagged as containing secrets (false positive)**
 Solution: Review the flagged content. If it's a false positive (e.g., a note discussing API key formats without containing real keys), re-run with `--no-secret-scan`. The scanner is intentionally conservative — it's better to flag and skip than to store a real secret in your database.

@@ -13,9 +13,21 @@
  *   - people        (if people are mentioned — with fuzzy match / create / link)
  *   - interactions  (one per person found — links person ↔ thought)
  *   - action_items  (only if the speaker commits to first-person action)
+ *
+ * Setup:
+ *   npm install pg
+ *   npm install --save-dev @types/pg
+ *
+ * Environment variables required:
+ *   DATABASE_URL      — PostgreSQL connection string
+ *                       e.g. postgresql://ob1:password@localhost:5432/ob1
+ *   LITELLM_BASE_URL  — LiteLLM base URL (default: http://localhost:4000/v1)
+ *   LITELLM_API_KEY   — LiteLLM API key
+ *   EMBEDDING_MODEL   — Embedding model name (default: text-embedding-3-small)
+ *   LLM_MODEL         — Chat model name (default: gpt-4o-mini)
  */
 
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { Pool, PoolClient } from "pg";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -32,6 +44,14 @@ interface ExtractedMetadata {
 
 interface PersonMention {
   name: string;
+  relationship_type: string | null;
+  role: string | null;
+}
+
+interface PersonRow {
+  id: string;
+  name: string;
+  aliases: string[] | null;
   relationship_type: string | null;
   role: string | null;
 }
@@ -54,6 +74,16 @@ interface RoutingOutcome {
   writes: WriteResult[];
   people: PersonResult[];
 }
+
+// ---------------------------------------------------------------------------
+// Database pool
+// ---------------------------------------------------------------------------
+// Create a single pool and reuse it across calls. The DATABASE_URL environment
+// variable must be set before importing this module.
+
+export const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+});
 
 // ---------------------------------------------------------------------------
 // 1. LLM Metadata Extraction
@@ -80,39 +110,61 @@ const EXTRACTION_SYSTEM_PROMPT = `Extract metadata from a captured thought. Retu
 Only extract what is explicitly there.`;
 
 /**
- * Call your LLM of choice to extract structured metadata from raw text.
- * Replace this with your own LLM integration (OpenAI, Anthropic, OpenRouter, etc.)
+ * Call LiteLLM to extract structured metadata from raw text.
+ * Sends EXTRACTION_SYSTEM_PROMPT as the system message and the input text
+ * as the user message, requesting JSON response format.
  */
 async function extractMetadata(text: string): Promise<ExtractedMetadata> {
-  // YOUR LLM CALL HERE — send EXTRACTION_SYSTEM_PROMPT as system message,
-  // text as user message, request JSON response format.
-  //
-  // Example with OpenAI-compatible API:
-  //
-  //   const response = await fetch("https://api.openai.com/v1/chat/completions", {
-  //     method: "POST",
-  //     headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
-  //     body: JSON.stringify({
-  //       model: "gpt-4o-mini",
-  //       response_format: { type: "json_object" },
-  //       messages: [
-  //         { role: "system", content: EXTRACTION_SYSTEM_PROMPT },
-  //         { role: "user", content: text },
-  //       ],
-  //     }),
-  //   });
-  //   return JSON.parse((await response.json()).choices[0].message.content);
+  const baseUrl = process.env.LITELLM_BASE_URL ?? "http://localhost:4000/v1";
+  const model = process.env.LLM_MODEL ?? "gpt-4o-mini";
 
-  throw new Error("Replace this with your LLM call");
+  const response = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.LITELLM_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: EXTRACTION_SYSTEM_PROMPT },
+        { role: "user", content: text },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`LiteLLM chat error: ${response.status} ${response.statusText}`);
+  }
+
+  const json = await response.json();
+  return JSON.parse(json.choices[0].message.content) as ExtractedMetadata;
 }
 
 /**
- * Generate an embedding vector for the input text.
+ * Generate an embedding vector for the input text via LiteLLM.
  * Used for semantic search across thoughts and interactions.
  */
 async function getEmbedding(text: string): Promise<number[]> {
-  // YOUR EMBEDDING CALL HERE — e.g. OpenAI text-embedding-3-small
-  throw new Error("Replace this with your embedding call");
+  const baseUrl = process.env.LITELLM_BASE_URL ?? "http://localhost:4000/v1";
+  const model = process.env.EMBEDDING_MODEL ?? "text-embedding-3-small";
+
+  const response = await fetch(`${baseUrl}/embeddings`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.LITELLM_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ model, input: text }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`LiteLLM embedding error: ${response.status} ${response.statusText}`);
+  }
+
+  const json = await response.json();
+  return json.data[0].embedding as number[];
 }
 
 // ---------------------------------------------------------------------------
@@ -151,33 +203,45 @@ function namesAreSimilar(name1: string, name2: string): boolean {
  *   Default — No match → create new person
  */
 async function findOrCreatePerson(
-  supabase: SupabaseClient,
+  client: PoolClient,
   person: PersonMention,
 ): Promise<PersonResult> {
-  const { data: allPeople } = await supabase
-    .from("people")
-    .select("id, name, aliases, relationship_type, role")
-    .eq("status", "active");
+  const { rows: allPeople } = await client.query<PersonRow>(
+    `SELECT id, name, aliases, relationship_type, role
+     FROM people
+     WHERE status = 'active'`,
+  );
 
   const nameLower = person.name.toLowerCase().trim();
 
   // --- Pass 1: Exact match by name or alias ---
-  for (const existing of allPeople || []) {
+  for (const existing of allPeople) {
     const nameMatch = existing.name.toLowerCase().trim() === nameLower;
-    const aliasMatch = (existing.aliases || []).some(
-      (a: string) => a.toLowerCase().trim() === nameLower
+    const aliasMatch = (existing.aliases ?? []).some(
+      (a) => a.toLowerCase().trim() === nameLower,
     );
 
     if (nameMatch || aliasMatch) {
       // Backfill missing metadata on the existing record
-      const updates: Record<string, unknown> = {};
-      if (person.role && !existing.role) updates.role = person.role;
-      if (person.relationship_type && !existing.relationship_type) {
-        updates.relationship_type = person.relationship_type;
+      const setClauses: string[] = [];
+      const values: unknown[] = [];
+
+      if (person.role && !existing.role) {
+        values.push(person.role);
+        setClauses.push(`role = $${values.length}`);
       }
-      if (Object.keys(updates).length > 0) {
-        updates.updated_at = new Date().toISOString();
-        await supabase.from("people").update(updates).eq("id", existing.id);
+      if (person.relationship_type && !existing.relationship_type) {
+        values.push(person.relationship_type);
+        setClauses.push(`relationship_type = $${values.length}`);
+      }
+
+      if (setClauses.length > 0) {
+        setClauses.push("updated_at = now()");
+        values.push(existing.id);
+        await client.query(
+          `UPDATE people SET ${setClauses.join(", ")} WHERE id = $${values.length}`,
+          values,
+        );
       }
 
       return { name: person.name, id: existing.id, action: "found" };
@@ -185,12 +249,12 @@ async function findOrCreatePerson(
   }
 
   // --- Pass 2: Fuzzy match → needs human confirmation ---
-  for (const existing of allPeople || []) {
+  for (const existing of allPeople) {
     if (namesAreSimilar(person.name, existing.name)) {
-      // In production, post a confirmation request to your inbox/queue
+      // In production, post a confirmation request to your inbox/queue.
       // e.g. "New person 'Mike S.' looks like 'Mike Smith' — same person?"
       console.log(
-        `⏳ Fuzzy match: "${person.name}" ≈ "${existing.name}" — needs confirmation`
+        `Fuzzy match: "${person.name}" ≈ "${existing.name}" — needs confirmation`,
       );
       return { name: person.name, id: "", action: "pending" };
     }
@@ -199,11 +263,11 @@ async function findOrCreatePerson(
   // --- Pass 3: First-name collision detection ---
   const newFirst = nameLower.split(/\s+/)[0];
   if (newFirst.length >= 3) {
-    for (const existing of allPeople || []) {
+    for (const existing of allPeople) {
       const existingFirst = existing.name.toLowerCase().trim().split(/\s+/)[0];
       if (newFirst === existingFirst && nameLower !== existing.name.toLowerCase().trim()) {
         console.log(
-          `⚠️ First-name collision: "${person.name}" vs "${existing.name}" — needs confirmation`
+          `First-name collision: "${person.name}" vs "${existing.name}" — needs confirmation`,
         );
         return { name: person.name, id: "", action: "pending" };
       }
@@ -211,18 +275,28 @@ async function findOrCreatePerson(
   }
 
   // --- Default: Create new person ---
-  const insertData: Record<string, unknown> = { name: person.name, status: "active" };
-  if (person.relationship_type) insertData.relationship_type = person.relationship_type;
-  if (person.role) insertData.role = person.role;
+  const cols = ["name", "status"];
+  const vals: unknown[] = [person.name, "active"];
 
-  const { data: newPerson, error } = await supabase
-    .from("people")
-    .insert(insertData)
-    .select("id")
-    .single();
+  if (person.relationship_type) {
+    cols.push("relationship_type");
+    vals.push(person.relationship_type);
+  }
+  if (person.role) {
+    cols.push("role");
+    vals.push(person.role);
+  }
 
-  if (error) return { name: person.name, id: "", action: "created" };
-  return { name: person.name, id: newPerson.id, action: "created" };
+  const placeholders = vals.map((_, i) => `$${i + 1}`).join(", ");
+
+  const { rows } = await client.query<{ id: string }>(
+    `INSERT INTO people (${cols.join(", ")})
+     VALUES (${placeholders})
+     RETURNING id`,
+    vals,
+  );
+
+  return { name: person.name, id: rows[0]?.id ?? "", action: "created" };
 }
 
 // ---------------------------------------------------------------------------
@@ -243,7 +317,6 @@ async function findOrCreatePerson(
  *      (only populated when speaker uses first-person intent)
  */
 async function processThought(
-  supabase: SupabaseClient,
   text: string,
   source: string = "api",
 ): Promise<RoutingOutcome> {
@@ -257,83 +330,102 @@ async function processThought(
   ]);
 
   const domain = metadata.domain || "personal";
+  // pgvector expects the embedding as a PostgreSQL array literal: '[0.1,0.2,...]'
+  const embeddingLiteral = `[${embedding.join(",")}]`;
 
-  // -----------------------------------------------------------------------
-  // Route 1: THOUGHTS table (always written)
-  // -----------------------------------------------------------------------
-  const { data: thoughtData, error: thoughtError } = await supabase
-    .from("thoughts")
-    .insert({
-      content: text,
-      embedding,
-      domain,
-      status: "active",
-      source,
-      metadata: { ...metadata },
-    })
-    .select("id")
-    .single();
+  const client = await pool.connect();
 
-  const thoughtId = thoughtData?.id || null;
+  try {
+    await client.query("BEGIN");
 
-  writes.push({
-    table: "thoughts",
-    success: !thoughtError,
-    error: thoughtError?.message,
-  });
+    // -----------------------------------------------------------------------
+    // Route 1: THOUGHTS table (always written)
+    // -----------------------------------------------------------------------
+    let thoughtId: string | null = null;
 
-  // -----------------------------------------------------------------------
-  // Route 2: PEOPLE table (find/create) + INTERACTIONS table (link)
-  // -----------------------------------------------------------------------
-  for (const personMention of metadata.people) {
-    const result = await findOrCreatePerson(supabase, personMention);
-    people.push(result);
-
-    if (result.action === "created") {
-      writes.push({ table: "people", success: true, details: `Created: ${result.name}` });
+    try {
+      const { rows } = await client.query<{ id: string }>(
+        `INSERT INTO thoughts (content, embedding, domain, status, source, metadata)
+         VALUES ($1, $2::vector, $3, 'active', $4, $5)
+         RETURNING id`,
+        [text, embeddingLiteral, domain, source, JSON.stringify(metadata)],
+      );
+      thoughtId = rows[0]?.id ?? null;
+      writes.push({ table: "thoughts", success: true });
+    } catch (err) {
+      writes.push({ table: "thoughts", success: false, error: String(err) });
     }
 
-    // Write an interaction record for every resolved person
-    if (result.id) {
-      const { error: interactionError } = await supabase.from("interactions").insert({
-        person_id: result.id,
-        note: text,
-        source,
-        embedding,
-      });
+    // -----------------------------------------------------------------------
+    // Route 2: PEOPLE table (find/create) + INTERACTIONS table (link)
+    // -----------------------------------------------------------------------
+    for (const personMention of metadata.people) {
+      const result = await findOrCreatePerson(client, personMention);
+      people.push(result);
 
-      writes.push({
-        table: "interactions",
-        success: !interactionError,
-        error: interactionError?.message,
-        details: `For: ${result.name}`,
-      });
+      if (result.action === "created") {
+        writes.push({ table: "people", success: true, details: `Created: ${result.name}` });
+      }
+
+      // Write an interaction record for every resolved person
+      if (result.id) {
+        try {
+          await client.query(
+            `INSERT INTO interactions (person_id, note, source, embedding)
+             VALUES ($1, $2, $3, $4::vector)`,
+            [result.id, text, source, embeddingLiteral],
+          );
+          writes.push({
+            table: "interactions",
+            success: true,
+            details: `For: ${result.name}`,
+          });
+        } catch (err) {
+          writes.push({
+            table: "interactions",
+            success: false,
+            error: String(err),
+            details: `For: ${result.name}`,
+          });
+        }
+      }
     }
+
+    // -----------------------------------------------------------------------
+    // Route 3: ACTION_ITEMS table (only first-person commitments)
+    // -----------------------------------------------------------------------
+    for (const actionItem of metadata.action_items) {
+      const linkedPersonId = people.find((p) => p.id)?.id ?? null;
+
+      try {
+        await client.query(
+          `INSERT INTO action_items (title, domain, source, status, linked_person_id)
+           VALUES ($1, $2, $3, 'open', $4)`,
+          [actionItem, domain, source, linkedPersonId],
+        );
+        writes.push({
+          table: "action_items",
+          success: true,
+          details: actionItem.substring(0, 50),
+        });
+      } catch (err) {
+        writes.push({
+          table: "action_items",
+          success: false,
+          error: String(err),
+          details: actionItem.substring(0, 50),
+        });
+      }
+    }
+
+    await client.query("COMMIT");
+    return { thoughtId, writes, people };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
   }
-
-  // -----------------------------------------------------------------------
-  // Route 3: ACTION_ITEMS table (only first-person commitments)
-  // -----------------------------------------------------------------------
-  for (const actionItem of metadata.action_items) {
-    const linkedPersonId = people.find((p) => p.id)?.id || null;
-
-    const { error: actionError } = await supabase.from("action_items").insert({
-      title: actionItem,
-      domain,
-      source,
-      status: "open",
-      linked_person_id: linkedPersonId,
-    });
-
-    writes.push({
-      table: "action_items",
-      success: !actionError,
-      error: actionError?.message,
-      details: actionItem.substring(0, 50),
-    });
-  }
-
-  return { thoughtId, writes, people };
 }
 
 // ---------------------------------------------------------------------------

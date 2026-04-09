@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { pool } from '../db/pool.js';
 import { withBrainSchema } from '../db/with-schema.js';
 import { getEmbedding } from '../ai/embeddings.js';
@@ -35,6 +35,11 @@ function verifySlackSignature(
   } catch {
     return false;
   }
+}
+
+function computeFingerprint(text: string): string {
+  const normalised = text.trim().replace(/\s+/g, ' ').toLowerCase();
+  return createHash('sha256').update(normalised, 'utf8').digest('hex');
 }
 
 // ── Slack event webhook handler ───────────────────────────────────────────────
@@ -132,12 +137,14 @@ export async function handleSlackEvent(c: Context): Promise<Response> {
         };
 
         await query(
-          `INSERT INTO thoughts (content, embedding, metadata)
-           VALUES ($1, $2, $3)
-           ON CONFLICT ((metadata->>'slack_ts'))
-              WHERE metadata->>'source' = 'slack'
-              DO NOTHING`,
-          [text, JSON.stringify(embedding), JSON.stringify(enrichedMetadata)],
+          `INSERT INTO thoughts (content, content_fingerprint, embedding, metadata)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (content_fingerprint)
+              WHERE content_fingerprint IS NOT NULL
+              DO UPDATE SET
+                updated_at = now(),
+                metadata   = thoughts.metadata || EXCLUDED.metadata`,
+          [text, computeFingerprint(text), JSON.stringify(embedding), JSON.stringify(enrichedMetadata)],
         );
       });
 

@@ -24,7 +24,7 @@ Parses X (formerly Twitter) data exports and imports three types of content as s
 - Working Open Brain setup ([guide](../../docs/01-getting-started.md))
 - **X/Twitter data export** — request from X Settings → Your Account → Download an archive
 - **Node.js 18+** installed
-- **OpenRouter API key** for embedding generation
+- **LiteLLM API key** for embedding generation
 
 ## Credential Tracker
 
@@ -33,11 +33,8 @@ X/TWITTER IMPORT -- CREDENTIAL TRACKER
 --------------------------------------
 
 FROM YOUR OPEN BRAIN SETUP
-  Supabase URL:          ____________
-  Service Role Key:      ____________
-
-FROM OPENROUTER
-  API Key:               ____________
+  DATABASE_URL:          ____________
+  LiteLLM API Key:       ____________
 
 --------------------------------------
 ```
@@ -58,9 +55,9 @@ FROM OPENROUTER
 
 3. **Create `.env`** with your credentials (see `.env.example`):
    ```env
-   SUPABASE_URL=https://your-project.supabase.co
-   SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-   OPENROUTER_API_KEY=sk-or-v1-your-key
+   DATABASE_URL=postgresql://ob1:password@localhost:5432/ob1
+   LITELLM_BASE_URL=http://localhost:4000/v1
+   LITELLM_API_KEY=your-litellm-api-key
    ```
 
 4. **Preview what will be imported** (dry run):
@@ -88,6 +85,7 @@ After running the import:
 - All tagged with `source_type: x_twitter_import`
 - Retweets are automatically excluded
 - Short DM conversations (<3 messages) are filtered out
+- All content deduplicated via SHA-256 content fingerprint — re-running is safe
 
 **Scale reference:** Tested with 1,000+ tweets and DMs imported successfully.
 
@@ -101,3 +99,9 @@ Twitter wraps JSON in a `window.YTD.tweets.part0 = [...]` prefix. The script str
 
 **Issue: All tweets showing as "skipped"**
 Tweets under 30 characters and retweets (starting with "RT @") are filtered out. If all your tweets are short, lower the threshold in the `processTweets()` function.
+
+**Issue: Embedding errors**
+Check that `LITELLM_API_KEY` is valid and your LiteLLM instance is reachable at `LITELLM_BASE_URL`. Test with: `curl $LITELLM_BASE_URL/models -H "Authorization: Bearer $LITELLM_API_KEY"`.
+
+**Issue: Database connection errors**
+Verify `DATABASE_URL` is correct and PostgreSQL is running. Test with: `psql $DATABASE_URL -c "SELECT 1;"`.

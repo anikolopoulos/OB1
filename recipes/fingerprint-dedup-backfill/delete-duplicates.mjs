@@ -21,6 +21,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import pg from "pg";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -51,25 +52,17 @@ const env = {
   ...loadEnv(path.join(__dirname, ".env.local")),
 };
 
-const SUPABASE_URL = env.SUPABASE_URL || process.env.SUPABASE_URL;
-const SERVICE_ROLE_KEY =
-  env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+const DATABASE_URL = env.DATABASE_URL || process.env.DATABASE_URL;
 
-if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
+if (!DATABASE_URL) {
   console.error(
-    "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY.\n" +
-      "Set them in .env, .env.local, or as environment variables."
+    "Missing DATABASE_URL.\n" +
+      "Set it in .env, .env.local, or as an environment variable."
   );
   process.exit(1);
 }
 
-const REST_BASE = `${SUPABASE_URL}/rest/v1`;
-const HEADERS = {
-  apikey: SERVICE_ROLE_KEY,
-  Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
-  "Content-Type": "application/json",
-  Prefer: "return=minimal",
-};
+const pool = new pg.Pool({ connectionString: DATABASE_URL });
 
 // ── Fingerprint logic (matches content-fingerprint-dedup primitive) ─────────
 
@@ -91,77 +84,51 @@ function buildFingerprint(text) {
   return crypto.createHash("sha256").update(normalized, "utf8").digest("hex");
 }
 
-// ── REST helpers ────────────────────────────────────────────────────────────
+// ── Database helpers ────────────────────────────────────────────────────────
 
 async function fetchBatch(cursorId, batchSize) {
-  const url =
-    `${REST_BASE}/thoughts` +
-    `?content_fingerprint=is.null` +
-    `&id=gt.${cursorId}` +
-    `&select=id,content` +
-    `&limit=${batchSize}` +
-    `&order=id.asc`;
-  const res = await fetch(url, { headers: HEADERS });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Fetch HTTP ${res.status} — ${body.slice(0, 300)}`);
-  }
-  const text = await res.text();
-  if (!text) return [];
-  return JSON.parse(text);
+  const result = await pool.query(
+    `SELECT id, content
+     FROM thoughts
+     WHERE content_fingerprint IS NULL
+       AND id > $1
+     ORDER BY id ASC
+     LIMIT $2`,
+    [cursorId, batchSize]
+  );
+  return result.rows;
 }
 
 async function checkFingerprintsExist(hashes) {
   if (!hashes.length) return new Set();
-  const CHUNK = 100;
   const existingSet = new Set();
-  for (let i = 0; i < hashes.length; i += CHUNK) {
-    const chunk = hashes.slice(i, i + CHUNK);
-    const inList = chunk.join(",");
-    const url = `${REST_BASE}/thoughts?content_fingerprint=in.(${inList})&select=content_fingerprint&limit=${CHUNK * 2}`;
-    const res = await fetch(url, { headers: HEADERS });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`CheckExists HTTP ${res.status} — ${body.slice(0, 200)}`);
-    }
-    const rows = await res.json();
-    for (const r of rows) {
-      if (r.content_fingerprint) existingSet.add(r.content_fingerprint);
-    }
+  // Use ANY($1::text[]) for efficient batch lookup
+  const result = await pool.query(
+    `SELECT content_fingerprint
+     FROM thoughts
+     WHERE content_fingerprint = ANY($1::text[])`,
+    [hashes]
+  );
+  for (const r of result.rows) {
+    if (r.content_fingerprint) existingSet.add(r.content_fingerprint);
   }
   return existingSet;
 }
 
 async function deleteIds(ids) {
   if (!ids.length) return 0;
-  const CHUNK = 200;
-  let deleted = 0;
-  for (let i = 0; i < ids.length; i += CHUNK) {
-    const chunk = ids.slice(i, i + CHUNK);
-    const url = `${REST_BASE}/thoughts?id=in.(${chunk.join(",")})`;
-    const res = await fetch(url, { method: "DELETE", headers: HEADERS });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`DELETE HTTP ${res.status} — ${body.slice(0, 200)}`);
-    }
-    deleted += chunk.length;
-  }
-  return deleted;
+  const result = await pool.query(
+    `DELETE FROM thoughts WHERE id = ANY($1::int[])`,
+    [ids]
+  );
+  return result.rowCount;
 }
 
 async function patchFingerprint(id, fingerprint) {
-  const url = `${REST_BASE}/thoughts?id=eq.${id}`;
-  const res = await fetch(url, {
-    method: "PATCH",
-    headers: HEADERS,
-    body: JSON.stringify({ content_fingerprint: fingerprint }),
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(
-      `PATCH id=${id}: HTTP ${res.status} — ${body.slice(0, 200)}`
-    );
-  }
+  await pool.query(
+    `UPDATE thoughts SET content_fingerprint = $1 WHERE id = $2`,
+    [fingerprint, id]
+  );
 }
 
 // ── State ───────────────────────────────────────────────────────────────────
@@ -330,6 +297,8 @@ async function main() {
   try {
     fs.unlinkSync(STATE_FILE);
   } catch {}
+
+  await pool.end();
 }
 
 main().catch((err) => {

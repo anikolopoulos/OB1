@@ -20,10 +20,10 @@ A pattern for using LLM-extracted metadata to route unstructured text into the c
 
 Before you start, make sure you have:
 
-- A **Supabase** project with the database tables created (SQL provided below)
-- An **OpenAI-compatible API key** for LLM calls and embeddings (OpenAI, OpenRouter, Anthropic, etc.)
-- **Node.js 18+** or **Deno** installed on your machine
-- The `@supabase/supabase-js` package installed (`npm install @supabase/supabase-js`)
+- A **working Open Brain Docker setup** with PostgreSQL running ([guide](../../docs/01-getting-started.md))
+- A **LiteLLM** instance for LLM calls and embeddings
+- **Node.js 18+** installed on your machine
+- The `pg` package installed (`npm install pg && npm install --save-dev @types/pg`)
 
 ## How It Works
 
@@ -75,127 +75,116 @@ The LLM is prompted to ONLY extract action items when the speaker commits to doi
 ![Step 1](https://img.shields.io/badge/Step_1-Create_Your_Database_Tables-2E86AB?style=for-the-badge)
 
 <details>
-<summary>📋 <strong>SQL: Create all five tables and grant permissions</strong> (click to expand)</summary>
+<summary>📋 <strong>SQL: Create all five tables</strong> (click to expand)</summary>
 
 ```sql
 -- Enable the vector extension for embeddings
-create extension if not exists vector;
+CREATE EXTENSION IF NOT EXISTS vector;
 
 -- 1. Thoughts table — the raw capture
-create table thoughts (
-  id uuid primary key default gen_random_uuid(),
-  content text not null,
+CREATE TABLE thoughts (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  content text NOT NULL,
   embedding vector(1536),
-  domain text default 'personal',
-  status text default 'active',
-  source text default 'api',
-  metadata jsonb default '{}',
-  created_at timestamptz default now(),
-  updated_at timestamptz default now()
+  domain text DEFAULT 'personal',
+  status text DEFAULT 'active',
+  source text DEFAULT 'api',
+  metadata jsonb DEFAULT '{}',
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
 );
 
 -- 2. People table — your contact graph
-create table people (
-  id uuid primary key default gen_random_uuid(),
-  name text not null,
-  aliases text[] default '{}',
+CREATE TABLE people (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  aliases text[] DEFAULT '{}',
   relationship_type text,
   role text,
-  status text default 'active',
-  created_at timestamptz default now(),
-  updated_at timestamptz default now()
+  status text DEFAULT 'active',
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
 );
 
 -- 3. Interactions table — links people to thoughts
-create table interactions (
-  id uuid primary key default gen_random_uuid(),
-  person_id uuid references people(id),
+CREATE TABLE interactions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  person_id uuid REFERENCES people(id),
   note text,
-  source text default 'api',
+  source text DEFAULT 'api',
   embedding vector(1536),
-  created_at timestamptz default now()
+  created_at timestamptz DEFAULT now()
 );
 
 -- 4. Action items table — first-person commitments only
-create table action_items (
-  id uuid primary key default gen_random_uuid(),
-  title text not null,
-  domain text default 'personal',
-  source text default 'api',
-  status text default 'open',
-  linked_person_id uuid references people(id),
-  created_at timestamptz default now(),
-  updated_at timestamptz default now()
+CREATE TABLE action_items (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  title text NOT NULL,
+  domain text DEFAULT 'personal',
+  source text DEFAULT 'api',
+  status text DEFAULT 'open',
+  linked_person_id uuid REFERENCES people(id),
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
 );
 
 -- 5. Pending confirmations table — for fuzzy match resolution
-create table pending_confirmations (
-  id uuid primary key default gen_random_uuid(),
-  type text not null,
-  payload jsonb not null,
+CREATE TABLE pending_confirmations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  type text NOT NULL,
+  payload jsonb NOT NULL,
   slack_ts text,
-  status text default 'pending',
-  created_at timestamptz default now()
+  status text DEFAULT 'pending',
+  created_at timestamptz DEFAULT now()
 );
-
--- Grant permissions to service_role (required on newer Supabase projects)
-grant select, insert, update, delete on table public.thoughts to service_role;
-grant select, insert, update, delete on table public.people to service_role;
-grant select, insert, update, delete on table public.interactions to service_role;
-grant select, insert, update, delete on table public.action_items to service_role;
-grant select, insert, update, delete on table public.pending_confirmations to service_role;
 ```
 
 </details>
 
-Run this SQL in your Supabase SQL Editor (Dashboard → SQL Editor → New Query → paste → Run).
+Connect to your PostgreSQL instance and run the SQL above:
 
-✅ **Done when:** You can see all five tables in the Supabase Table Editor.
-
----
-
-![Step 2](https://img.shields.io/badge/Step_2-Wire_Up_Your_LLM_and_Embedding_Calls-2E86AB?style=for-the-badge)
-
-Open `index.ts` and find the two placeholder functions:
-
-**1. Replace `extractMetadata()`:**
-Swap out the `throw` with your LLM API call. The system prompt (`EXTRACTION_SYSTEM_PROMPT`) is already defined for you. Send it as the system message and the input text as the user message. Request JSON response format.
-
-**2. Replace `getEmbedding()`:**
-Swap out the `throw` with your embedding API call. We used `text-embedding-3-small` from OpenAI (1536 dimensions). If you use a different model, update the `vector(1536)` in the SQL above to match your model's dimensions.
-
-> [!TIP]
-> You can use OpenRouter as a proxy to access multiple LLM providers with one API key. That's what I use — it lets me swap models without changing code.
-
-✅ **Done when:** Both functions make real API calls and return data instead of throwing errors.
-
----
-
-![Step 3](https://img.shields.io/badge/Step_3-Initialize_Your_Supabase_Client-2E86AB?style=for-the-badge)
-
-```typescript
-import { createClient } from "@supabase/supabase-js";
-
-const supabase = createClient(
-  "https://YOUR_PROJECT.supabase.co",
-  "YOUR_SERVICE_ROLE_KEY"
-);
+```bash
+psql $DATABASE_URL -f schema.sql
 ```
 
-> [!CAUTION]
-> Use the **service role key**, not the anon key. The anon key has Row Level Security restrictions that will block server-side inserts. Never expose the service role key in client-side code.
+Or paste the SQL directly into your preferred SQL client (pgAdmin, TablePlus, DBeaver, etc.).
 
-✅ **Done when:** You can run `supabase.from("thoughts").select("id").limit(1)` without errors.
+✅ **Done when:** You can query all five tables without errors.
 
 ---
 
-![Step 4](https://img.shields.io/badge/Step_4-Call_the_Router-2E86AB?style=for-the-badge)
+![Step 2](https://img.shields.io/badge/Step_2-Configure_Environment_Variables-2E86AB?style=for-the-badge)
+
+Copy `.env.example` to `.env` and fill in your values:
+
+```bash
+cp .env.example .env
+```
+
+```
+DATABASE_URL=postgresql://ob1:password@localhost:5432/ob1
+LITELLM_BASE_URL=http://localhost:4000/v1
+LITELLM_API_KEY=your-litellm-api-key
+EMBEDDING_MODEL=text-embedding-3-small
+LLM_MODEL=gpt-4o-mini
+```
+
+Then load the variables before running:
+
+```bash
+export $(cat .env | xargs)
+```
+
+✅ **Done when:** `echo $DATABASE_URL` prints your connection string.
+
+---
+
+![Step 3](https://img.shields.io/badge/Step_3-Call_the_Router-2E86AB?style=for-the-badge)
 
 ```typescript
 import { processThought } from "./index";
 
 const result = await processThought(
-  supabase,
   "I need to call Sarah tomorrow about the school fundraiser"
 );
 
@@ -214,11 +203,11 @@ console.log(result);
 // }
 ```
 
-✅ **Done when:** You see rows appear in all four tables in the Supabase Table Editor after running the script.
+✅ **Done when:** You see rows appear in all four tables after running the script.
 
 ---
 
-![Step 5](https://img.shields.io/badge/Step_5-Verify_the_Routing_Logic-2E86AB?style=for-the-badge)
+![Step 4](https://img.shields.io/badge/Step_4-Verify_the_Routing_Logic-2E86AB?style=for-the-badge)
 
 Test these three inputs to confirm each routing path works:
 
@@ -232,7 +221,7 @@ Test these three inputs to confirm each routing path works:
 
 ## Expected Outcome
 
-After following all five steps, you'll have a working schema-aware router that:
+After following all four steps, you'll have a working schema-aware router that:
 
 - Captures every input to the `thoughts` table (nothing is ever lost)
 - Automatically builds a contact graph in the `people` table as you mention names
@@ -240,16 +229,11 @@ After following all five steps, you'll have a working schema-aware router that:
 - Only creates action items for things YOU commit to doing (not other people's requests)
 - Flags ambiguous name matches for human review instead of guessing
 
-Your Supabase dashboard should show data flowing into all four tables, with proper foreign key relationships between `people`, `interactions`, and `action_items`.
-
 ## Troubleshooting
 
 ### "Error: relation 'thoughts' does not exist"
 
-You haven't run the SQL from Step 1 yet, or you ran it in the wrong Supabase project. Double-check that you're looking at the correct project in your Supabase dashboard, then re-run the SQL in the SQL Editor.
-
-> [!WARNING]
-> If you have multiple Supabase projects, make sure your `SUPABASE_URL` matches the project where you created the tables. This is the #1 mistake I made — spent an hour debugging before I realized I was pointed at my dev project instead of production.
+You haven't run the SQL from Step 1 yet. Connect to the correct PostgreSQL database and re-run the schema SQL.
 
 ### "LLM returns empty people array even though I mentioned someone by name"
 
@@ -270,18 +254,18 @@ If you've customized the prompt, make sure this rule survived your edits.
 The `namesAreSimilar()` function intentionally has conservative matching — it only looks at first names. If "Mike" and "Michael Smith" aren't matching, it's because the first name "Mike" doesn't contain "Michael" (it goes the other direction). You may want to adjust the fuzzy logic for your specific use case, but be careful: too aggressive and you'll merge different people; too conservative and you'll create duplicates.
 
 > [!TIP]
-> Check the `pending_confirmations` table in Supabase. If fuzzy matches are being flagged there but never resolved, that's your queue of ambiguous matches waiting for human review. Build a simple UI or bot command to process them.
+> Check the `pending_confirmations` table. If fuzzy matches are being flagged there but never resolved, that's your queue of ambiguous matches waiting for human review. Build a simple UI or bot command to process them.
 
 ### "Embeddings dimension mismatch"
 
-If you switched from `text-embedding-3-small` (1536 dimensions) to a different model, you need to update the `vector(1536)` in the SQL schema to match. For example, `text-embedding-3-large` uses 3072 dimensions. Drop and recreate the tables with the correct dimension, or alter the columns:
+If you switched from `text-embedding-3-small` (1536 dimensions) to a different model, update the `vector(1536)` in the SQL schema to match. For example, `text-embedding-3-large` uses 3072 dimensions. Alter the columns:
 
 <details>
 <summary>📋 <strong>SQL: Change embedding dimensions</strong> (click to expand)</summary>
 
 ```sql
-alter table thoughts alter column embedding type vector(YOUR_DIMENSION);
-alter table interactions alter column embedding type vector(YOUR_DIMENSION);
+ALTER TABLE thoughts ALTER COLUMN embedding TYPE vector(YOUR_DIMENSION);
+ALTER TABLE interactions ALTER COLUMN embedding TYPE vector(YOUR_DIMENSION);
 ```
 
 </details>

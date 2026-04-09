@@ -17,6 +17,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import pg from "pg";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -41,25 +42,17 @@ const env = {
   ...loadEnv(path.join(__dirname, ".env.local")),
 };
 
-const SUPABASE_URL = env.SUPABASE_URL || process.env.SUPABASE_URL;
-const SERVICE_ROLE_KEY =
-  env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+const DATABASE_URL = env.DATABASE_URL || process.env.DATABASE_URL;
 
-if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
+if (!DATABASE_URL) {
   console.error(
-    "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY.\n" +
-      "Set them in .env, .env.local, or as environment variables."
+    "Missing DATABASE_URL.\n" +
+      "Set it in .env, .env.local, or as an environment variable."
   );
   process.exit(1);
 }
 
-const REST_BASE = `${SUPABASE_URL}/rest/v1`;
-const HEADERS = {
-  apikey: SERVICE_ROLE_KEY,
-  Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
-  "Content-Type": "application/json",
-  Prefer: "return=minimal",
-};
+const pool = new pg.Pool({ connectionString: DATABASE_URL });
 
 // ── Fingerprint logic (matches content-fingerprint-dedup primitive) ─────────
 
@@ -92,37 +85,19 @@ function buildContentFingerprint(text) {
   return crypto.createHash("sha256").update(normalized, "utf8").digest("hex");
 }
 
-// ── REST helpers ────────────────────────────────────────────────────────────
+// ── Database helpers ────────────────────────────────────────────────────────
 
 async function fetchBatch(cursorId, batchSize) {
-  const url =
-    `${REST_BASE}/thoughts` +
-    `?content_fingerprint=is.null` +
-    `&id=gt.${cursorId}` +
-    `&select=id,content` +
-    `&limit=${batchSize}` +
-    `&order=id.asc`;
-  const res = await fetch(url, { headers: HEADERS });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Fetch HTTP ${res.status} — ${body.slice(0, 300)}`);
-  }
-  const text = await res.text();
-  if (!text) return [];
-  return JSON.parse(text);
-}
-
-async function patchFingerprint(id, fingerprint) {
-  const url = `${REST_BASE}/thoughts?id=eq.${id}`;
-  const res = await fetch(url, {
-    method: "PATCH",
-    headers: HEADERS,
-    body: JSON.stringify({ content_fingerprint: fingerprint }),
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`PATCH id=${id}: HTTP ${res.status} — ${body.slice(0, 200)}`);
-  }
+  const result = await pool.query(
+    `SELECT id, content
+     FROM thoughts
+     WHERE content_fingerprint IS NULL
+       AND id > $1
+     ORDER BY id ASC
+     LIMIT $2`,
+    [cursorId, batchSize]
+  );
+  return result.rows;
 }
 
 async function patchBatch(updates) {
@@ -134,18 +109,24 @@ async function patchBatch(updates) {
   for (let i = 0; i < updates.length; i += CONCURRENCY) {
     const chunk = updates.slice(i, i + CONCURRENCY);
     const results = await Promise.allSettled(
-      chunk.map(({ id, fingerprint }) => patchFingerprint(id, fingerprint))
+      chunk.map(({ id, fingerprint }) =>
+        pool.query(
+          `UPDATE thoughts SET content_fingerprint = $1 WHERE id = $2`,
+          [fingerprint, id]
+        )
+      )
     );
     for (const result of results) {
       if (result.status === "fulfilled") {
         done++;
       } else {
         const msg = result.reason?.message ?? String(result.reason);
-        if (msg.includes("409") || msg.includes("23505")) {
+        // Unique constraint violation on content_fingerprint
+        if (msg.includes("23505") || msg.includes("unique")) {
           duplicates++;
         } else {
           errors++;
-          console.warn("  PATCH error:", msg.slice(0, 180));
+          console.warn("  UPDATE error:", msg.slice(0, 180));
         }
       }
     }
@@ -247,6 +228,8 @@ async function main() {
     fs.unlinkSync(STATE_FILE);
     console.log("State file cleaned up.");
   } catch {}
+
+  await pool.end();
 }
 
 main().catch((err) => {

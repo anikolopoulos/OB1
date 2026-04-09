@@ -32,9 +32,9 @@ RESEARCH-TO-DECISION WORKFLOW -- CREDENTIAL TRACKER
 ---------------------------------------------------
 
 FROM YOUR OPEN BRAIN SETUP
-  Project URL:           ____________
-  Secret key:            ____________
-  OpenRouter API key:    ____________
+  MCP server URL:        ____________
+  MCP API key:           ____________
+  LiteLLM API key:       ____________
   Search tool available: yes / no
   Capture tool available: yes / no
 

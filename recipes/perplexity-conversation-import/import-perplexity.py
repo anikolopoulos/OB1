@@ -14,8 +14,8 @@ Usage:
     python import-perplexity.py path/to/export.xlsx [options]
 
 Ingestion modes:
-    Default:              Supabase direct insert (requires SUPABASE_URL,
-                          SUPABASE_SERVICE_ROLE_KEY, OPENROUTER_API_KEY)
+    Default:              Direct PostgreSQL insert (requires DATABASE_URL,
+                          LITELLM_API_KEY)
 
 Options:
     --xlsx PATH           Path to Perplexity .xlsx export (required)
@@ -24,15 +24,16 @@ Options:
     --before YYYY-MM-DD   Only conversations created before this date
     --limit N             Max items per type to process
     --type TYPE           What to import: conversations, memory, or both (default: both)
-    --model MODEL         LLM backend: openrouter (default) or ollama
+    --model MODEL         LLM backend: litellm (default) or ollama
     --ollama-model NAME   Ollama model name (default: qwen3)
     --verbose             Show full content during processing
     --report FILE         Write a markdown report of everything imported
 
 Environment variables:
-    SUPABASE_URL               Supabase project URL
-    SUPABASE_SERVICE_ROLE_KEY  Supabase service role key
-    OPENROUTER_API_KEY         OpenRouter API key (summarization + embeddings)
+    DATABASE_URL       PostgreSQL connection string
+    LITELLM_BASE_URL   LiteLLM API base URL (default: http://localhost:4000/v1)
+    LITELLM_API_KEY    LiteLLM API key (summarization + embeddings)
+    EMBEDDING_MODEL    Embedding model name (default: text-embedding-3-small)
 """
 
 import argparse
@@ -48,14 +49,12 @@ from pathlib import Path
 
 SYNC_LOG_PATH = Path("perplexity-sync-log.json")
 
-OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 OLLAMA_BASE = "http://localhost:11434"
 
-# Supabase: reads the "Secret Key" from Settings → API (starts with sb_secret_)
-# The env var name uses the legacy convention for cross-recipe consistency.
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+LITELLM_BASE_URL = os.environ.get("LITELLM_BASE_URL", "http://localhost:4000/v1").rstrip("/")
+LITELLM_API_KEY = os.environ.get("LITELLM_API_KEY", "")
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
 
 SUMMARIZATION_PROMPT = """\
 You are distilling a Perplexity Q&A exchange into standalone thoughts for a \
@@ -121,6 +120,12 @@ def make_dedupe_key(*parts):
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
+def compute_fingerprint(text):
+    """SHA-256 fingerprint of normalized content for DB-level dedup."""
+    normalized = " ".join(text.strip().lower().split())
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
 # ─── HTTP Helpers ────────────────────────────────────────────────────────────
 
 try:
@@ -135,6 +140,14 @@ try:
 except ImportError:
     print("Missing dependency: openpyxl")
     print("Install with: pip install openpyxl")
+    sys.exit(1)
+
+try:
+    import psycopg2
+    import psycopg2.extras
+except ImportError:
+    print("Missing dependency: psycopg2-binary")
+    print("Install with: pip install psycopg2-binary")
     sys.exit(1)
 
 
@@ -462,18 +475,18 @@ def should_skip_memory(row, sync_log):
 # ─── LLM Summarization ──────────────────────────────────────────────────────
 
 
-def summarize_openrouter(title, date_str, answer_text):
-    """Summarize a Perplexity Q&A into thoughts using OpenRouter."""
-    if not OPENROUTER_API_KEY:
-        print("   Warning: Skipping summarization (no OPENROUTER_API_KEY)")
+def summarize_litellm(title, date_str, answer_text):
+    """Summarize a Perplexity Q&A into thoughts using LiteLLM."""
+    if not LITELLM_API_KEY:
+        print("   Warning: Skipping summarization (no LITELLM_API_KEY)")
         return []
 
     truncated = answer_text[:6000]
 
     resp = http_post_with_retry(
-        f"{OPENROUTER_BASE}/chat/completions",
+        f"{LITELLM_BASE_URL}/chat/completions",
         headers={
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Authorization": f"Bearer {LITELLM_API_KEY}",
             "Content-Type": "application/json",
         },
         body={
@@ -548,24 +561,24 @@ def summarize(title, date_str, answer_text, args):
     """Dispatch to the appropriate summarization backend."""
     if args.model == "ollama":
         return summarize_ollama(title, date_str, answer_text, args.ollama_model)
-    return summarize_openrouter(title, date_str, answer_text)
+    return summarize_litellm(title, date_str, answer_text)
 
 
 # ─── Embedding Generation ───────────────────────────────────────────────────
 
 
 def generate_embedding(text):
-    """Generate a 1536-dim embedding via OpenRouter (text-embedding-3-small)."""
+    """Generate a 1536-dim embedding via LiteLLM (text-embedding-3-small)."""
     truncated = text[:8000]
 
     resp = http_post_with_retry(
-        f"{OPENROUTER_BASE}/embeddings",
+        f"{LITELLM_BASE_URL}/embeddings",
         headers={
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Authorization": f"Bearer {LITELLM_API_KEY}",
             "Content-Type": "application/json",
         },
         body={
-            "model": "openai/text-embedding-3-small",
+            "model": EMBEDDING_MODEL,
             "input": truncated,
         },
     )
@@ -586,42 +599,36 @@ def generate_embedding(text):
 # ─── Ingestion ───────────────────────────────────────────────────────────────
 
 
-def ingest_thought_supabase(content, metadata_dict, created_at=None):
-    """Insert a thought directly into Supabase with a generated embedding."""
+def ingest_thought_postgres(conn, content, metadata_dict, created_at=None):
+    """Insert a thought directly into PostgreSQL with a generated embedding."""
     embedding = generate_embedding(content)
     if not embedding:
         return {"ok": False, "error": "Failed to generate embedding"}
 
-    body = {
-        "content": content,
-        "embedding": embedding,
-        "metadata": metadata_dict,
-    }
-    if created_at:
-        body["created_at"] = created_at
+    fingerprint = compute_fingerprint(content)
+    embedding_json = json.dumps(embedding)
+    metadata_json = json.dumps(metadata_dict)
 
-    resp = http_post_with_retry(
-        f"{SUPABASE_URL}/rest/v1/thoughts",
-        headers={
-            "Content-Type": "application/json",
-            "apikey": SUPABASE_SERVICE_ROLE_KEY,
-            "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-            "Prefer": "return=minimal",
-        },
-        body=body,
-    )
-
-    if not resp:
-        return {"ok": False, "error": "No response from Supabase"}
-
-    if resp.status_code not in (200, 201):
-        try:
-            error_detail = resp.json()
-        except ValueError:
-            error_detail = resp.text
-        return {"ok": False, "error": f"HTTP {resp.status_code}: {error_detail}"}
-
-    return {"ok": True}
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO thoughts (content, content_fingerprint, embedding, metadata, created_at)
+                VALUES (%s, %s, %s::vector, %s::jsonb, %s)
+                ON CONFLICT (content_fingerprint) WHERE content_fingerprint IS NOT NULL
+                DO UPDATE SET updated_at = now(),
+                             metadata = thoughts.metadata || EXCLUDED.metadata
+            """, (
+                content,
+                fingerprint,
+                embedding_json,
+                metadata_json,
+                created_at,
+            ))
+        conn.commit()
+        return {"ok": True}
+    except Exception as e:
+        conn.rollback()
+        return {"ok": False, "error": str(e)}
 
 
 # ─── CLI ─────────────────────────────────────────────────────────────────────
@@ -672,9 +679,9 @@ Examples:
     )
     parser.add_argument(
         "--model",
-        choices=["openrouter", "ollama"],
-        default="openrouter",
-        help="LLM backend (default: openrouter)",
+        choices=["litellm", "ollama"],
+        default="litellm",
+        help="LLM backend (default: litellm)",
     )
     parser.add_argument(
         "--ollama-model", default="qwen3", help="Ollama model name (default: qwen3)"
@@ -694,7 +701,7 @@ Examples:
 # ─── Main: Conversations Pipeline ───────────────────────────────────────────
 
 
-def process_conversations(conversations, sync_log, args):
+def process_conversations(conversations, conn, sync_log, args):
     """Process and ingest conversations. Returns stats dict."""
     stats = {
         "total": len(conversations),
@@ -785,7 +792,7 @@ def process_conversations(conversations, sync_log, args):
         all_ok = True
         for i, thought in enumerate(thoughts):
             content = f"[Perplexity: {title} | {date_str}] {thought}"
-            result = ingest_thought_supabase(content, metadata, created_at=created_iso)
+            result = ingest_thought_postgres(conn, content, metadata, created_at=created_iso)
 
             if result.get("ok"):
                 stats["ingested"] += 1
@@ -812,7 +819,7 @@ def process_conversations(conversations, sync_log, args):
 # ─── Main: Memory Pipeline ──────────────────────────────────────────────────
 
 
-def process_memory(memories, sync_log, args):
+def process_memory(memories, conn, sync_log, args):
     """Process and ingest memory rows. Returns stats dict."""
     stats = {
         "total": len(memories),
@@ -939,7 +946,7 @@ def process_memory(memories, sync_log, args):
             else:
                 content = f"[Perplexity Memory: {synthetic_key}] {text}"
 
-            result = ingest_thought_supabase(content, meta, created_at=created_iso)
+            result = ingest_thought_postgres(conn, content, meta, created_at=created_iso)
 
             if result.get("ok"):
                 stats["ingested"] += 1
@@ -967,6 +974,23 @@ def process_memory(memories, sync_log, args):
 
 
 def main():
+    # Load .env file if present (before reading module-level env vars)
+    env_file = Path(__file__).parent / ".env"
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith('#') and '=' in line:
+                key, _, value = line.partition('=')
+                value = value.strip().strip('"').strip("'")
+                os.environ.setdefault(key.strip(), value)
+
+    # Re-read env vars after loading .env
+    global DATABASE_URL, LITELLM_BASE_URL, LITELLM_API_KEY, EMBEDDING_MODEL
+    DATABASE_URL = os.environ.get("DATABASE_URL", "")
+    LITELLM_BASE_URL = os.environ.get("LITELLM_BASE_URL", "http://localhost:4000/v1").rstrip("/")
+    LITELLM_API_KEY = os.environ.get("LITELLM_API_KEY", "")
+    EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
+
     args = parse_args()
 
     xlsx_path = Path(args.xlsx_path)
@@ -976,31 +1000,36 @@ def main():
 
     # Validate env vars for live mode
     if not args.dry_run:
-        if not SUPABASE_URL:
-            print("Error: SUPABASE_URL environment variable required.")
+        if not DATABASE_URL:
+            print("Error: DATABASE_URL environment variable required.")
             print(
-                "Set it to your Supabase project URL (e.g., https://xxxxx.supabase.co)"
+                "Set it to your PostgreSQL connection string "
+                "(e.g., postgresql://ob1:password@localhost:5432/ob1)"
             )
             sys.exit(1)
-        if not SUPABASE_SERVICE_ROLE_KEY:
-            print("Error: SUPABASE_SERVICE_ROLE_KEY environment variable required.")
+        if not LITELLM_API_KEY:
             print(
-                "This is your Supabase Secret Key (Settings → API → Secret key, starts with sb_secret_)"
+                "Error: LITELLM_API_KEY required for embeddings and summarization."
             )
-            sys.exit(1)
-        if not OPENROUTER_API_KEY:
-            print(
-                "Error: OPENROUTER_API_KEY required for embeddings and summarization."
-            )
-            print("Get one at https://openrouter.ai/keys")
+            print("Set LITELLM_API_KEY in your .env file or environment.")
             sys.exit(1)
 
     # Warn about missing API key for summarization in dry-run (won't produce summaries)
-    if args.dry_run and args.model == "openrouter" and not OPENROUTER_API_KEY:
+    if args.dry_run and args.model == "litellm" and not LITELLM_API_KEY:
         print(
-            "Note: OPENROUTER_API_KEY not set. Summarization will be skipped in dry-run."
+            "Note: LITELLM_API_KEY not set. Summarization will be skipped in dry-run."
         )
         print("Set the key for a full dry-run preview, or use --model ollama.\n")
+
+    # Connect to PostgreSQL (live mode only)
+    conn = None
+    if not args.dry_run:
+        try:
+            conn = psycopg2.connect(DATABASE_URL)
+        except psycopg2.OperationalError as e:
+            print(f"Error: could not connect to PostgreSQL: {e}")
+            print("Check DATABASE_URL in .env")
+            sys.exit(1)
 
     # Display run configuration
     mode = "DRY RUN" if args.dry_run else "LIVE"
@@ -1027,7 +1056,7 @@ def main():
         conversations = extract_conversations(str(xlsx_path))
         print(f"Found {len(conversations)} conversations.")
         conversations.sort(key=lambda c: c.get("created", ""))
-        conv_stats = process_conversations(conversations, sync_log, args)
+        conv_stats = process_conversations(conversations, conn, sync_log, args)
 
     # Process memory
     mem_stats = None
@@ -1035,7 +1064,10 @@ def main():
         print(f"\nExtracting memory from {xlsx_path}...")
         memories = extract_memory_rows(str(xlsx_path))
         print(f"Found {len(memories)} memory entries.")
-        mem_stats = process_memory(memories, sync_log, args)
+        mem_stats = process_memory(memories, conn, sync_log, args)
+
+    if conn:
+        conn.close()
 
     # ─── Summary ─────────────────────────────────────────────────────────────
 
@@ -1079,7 +1111,7 @@ def main():
         total_processed += mem_stats["processed"]
 
     if total_thoughts > 0:
-        # Summarization cost (conversations only): gpt-4o-mini via OpenRouter
+        # Summarization cost (conversations only): gpt-4o-mini via LiteLLM
         # ~$0.15/1M input, ~$0.60/1M output, ~800 tokens in / 200 tokens out per conv
         conv_count = conv_stats["processed"] if conv_stats else 0
         summarize_cost = (conv_count * 800 * 0.15 / 1_000_000) + (

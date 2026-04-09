@@ -26,7 +26,26 @@ Deduplication via a sync log ensures safe re-runs without duplicates.
 - Working Open Brain setup ([getting started guide](../../docs/01-getting-started.md))
 - Perplexity data export (`.xlsx` file)
 - Python 3.10+
-- OpenRouter API key (for embeddings + conversation summarization)
+- Your `DATABASE_URL` (from your credential tracker)
+- LiteLLM API key (for embeddings + conversation summarization)
+
+## Credential Tracker
+
+Copy this block into a text editor and fill it in as you go.
+
+```text
+PERPLEXITY CONVERSATION IMPORT -- CREDENTIAL TRACKER
+--------------------------------------
+
+FROM YOUR OPEN BRAIN SETUP
+  DATABASE_URL:          ____________
+  LiteLLM API key:       ____________
+
+FILE LOCATION
+  Path to .xlsx export:  ____________
+
+--------------------------------------
+```
 
 ## Step-by-Step
 
@@ -54,18 +73,18 @@ pip install -r requirements.txt
 
 ### 4. Set Environment Variables
 
-Get your Supabase Secret Key from the dashboard: **Settings → API → Secret key** (click reveal). It starts with `sb_secret_`. This is the key formerly known as "service_role key."
+Copy `.env.example` to `.env` and fill in your values:
 
 ```bash
-export SUPABASE_URL="https://your-project.supabase.co"
-export SUPABASE_SERVICE_ROLE_KEY="sb_secret_..."  # Your Secret Key
-export OPENROUTER_API_KEY="sk-or-v1-your-key"
+cp .env.example .env
 ```
 
-Or copy `.env.example` to `.env` and fill in the values, then:
+Or export them directly:
 
 ```bash
-source .env
+export DATABASE_URL="postgresql://ob1:password@localhost:5432/ob1"
+export LITELLM_API_KEY="your-litellm-api-key"
+export LITELLM_BASE_URL="http://localhost:4000/v1"  # optional, shown is the default
 ```
 
 ### 5. Dry Run
@@ -91,9 +110,9 @@ python import-perplexity.py path/to/export.xlsx --type conversations
 python import-perplexity.py path/to/export.xlsx --type memory
 ```
 
-### 7. Verify in Supabase
+### 7. Verify in Your Database
 
-Check your Supabase dashboard → Table Editor → `thoughts` table. You should see new rows with:
+Query the `thoughts` table via `psql` or any database client. You should see new rows with:
 - `content` starting with `[Perplexity:` or `[Perplexity Memory:`
 - `created_at` matching the original Perplexity date (not today's date)
 - `metadata.source` set to `perplexity` or `perplexity_memory`
@@ -142,14 +161,14 @@ Summary:
 - Optional date range filtering (`--after`, `--before`)
 
 **Stage 2: Summarize (conversations only)**
-- Sends each query + answer to an LLM (gpt-4o-mini via OpenRouter by default)
+- Sends each query + answer to an LLM (gpt-4o-mini via LiteLLM by default)
 - Prompt is tuned for Perplexity's Q&A format — focuses on decisions, lessons, and lasting context
 - Extracts 1-3 standalone thoughts per conversation
 - Memory entries skip this stage — they're already concise summaries from Perplexity
 
 **Stage 3: Ingest**
-- Generates a 1536-dim embedding per thought (text-embedding-3-small via OpenRouter)
-- Inserts into the `thoughts` table via Supabase REST API
+- Generates a 1536-dim embedding per thought (text-embedding-3-small via LiteLLM)
+- Inserts into the `thoughts` table via direct PostgreSQL connection
 - Attaches metadata: source, title/date/UUID (conversations), memory key/confidence (memory)
 - Preserves original timestamps — the `created_at` column is set to the Perplexity export's `CREATED` or `FIRST_CREATED_AT`, not "now"
 
@@ -161,8 +180,6 @@ Imported thoughts retain their original dates from Perplexity, not the import da
 |--------|------------|------------------------|
 | Conversations | `created_at` | `CREATED` |
 | Memory | `created_at` | `FIRST_CREATED_AT` |
-
-The `updated_at` column defaults to `now()` on insert (overwritten by Supabase trigger on any subsequent update), but `created_at` reflects the original date.
 
 ### JSON Profile Rows
 
@@ -187,6 +204,7 @@ These are automatically detected and flattened into separate thoughts:
 - **Memory**: SHA256 hash of `MEMORY_KEY | FIRST_CREATED_AT`
 - **JSON profiles**: SHA256 hash of the first 200 chars of `MEMORY_VALUE`
 - Stored in `perplexity-sync-log.json` (gitignored)
+- Database-level: each thought has a `content_fingerprint` (SHA-256 of normalized content); the upsert silently skips exact-duplicate content
 
 ## Options Reference
 
@@ -197,14 +215,14 @@ These are automatically detected and flattened into separate thoughts:
 | `--before YYYY-MM-DD` | — | Only import conversations created before this date |
 | `--limit N` | `0` (unlimited) | Max items to process per type |
 | `--type` | `both` | `conversations`, `memory`, or `both` |
-| `--model` | `openrouter` | LLM backend: `openrouter` or `ollama` |
+| `--model` | `litellm` | LLM backend: `litellm` or `ollama` |
 | `--ollama-model` | `qwen3` | Ollama model name (when using `--model ollama`) |
 | `--verbose` | `false` | Show full thought content during processing |
 | `--report FILE` | — | Write a markdown report of everything imported |
 
 ## Local LLM Option
 
-Use Ollama for free, private summarization (embeddings still require OpenRouter):
+Use Ollama for free, private summarization (embeddings still require LiteLLM):
 
 ```bash
 python import-perplexity.py export.xlsx --model ollama --ollama-model qwen3
@@ -214,7 +232,7 @@ python import-perplexity.py export.xlsx --model ollama --ollama-model qwen3
 
 | Component | Cost per item | Notes |
 |-----------|--------------|-------|
-| Summarization | ~$0.0003 | gpt-4o-mini via OpenRouter, conversations only |
+| Summarization | ~$0.0003 | gpt-4o-mini via LiteLLM, conversations only |
 | Embeddings | ~$0.000002 | text-embedding-3-small, all thoughts |
 
 For a typical export with 100 conversations and 50 memory entries, total cost is under $0.04.
@@ -226,29 +244,40 @@ For a typical export with 100 conversations and 50 memory entries, total cost is
 pip install openpyxl>=3.1
 ```
 
+**"No module named 'psycopg2'"**
+```bash
+pip install psycopg2-binary>=2.9.0
+```
+
 **"No 'Conversations' sheet found"**
 Your export may use different sheet names. Open the file in a spreadsheet app and check the sheet tabs. The script looks for exact names "Conversations" and "Memory".
 
-**"OPENROUTER_API_KEY environment variable required"**
+**"DATABASE_URL environment variable required"**
+Set `DATABASE_URL` to your PostgreSQL connection string in `.env` or your shell:
 ```bash
-export OPENROUTER_API_KEY="sk-or-v1-your-key"
+export DATABASE_URL="postgresql://ob1:password@localhost:5432/ob1"
 ```
-Or use `--model ollama` for local summarization (embeddings still need OpenRouter).
+
+**"LITELLM_API_KEY required for embeddings and summarization"**
+Set `LITELLM_API_KEY` in your `.env` file or environment. Or use `--model ollama` for local summarization (embeddings still need LiteLLM).
+
+**"could not connect to PostgreSQL"**
+Check that your `DATABASE_URL` is correct and that the PostgreSQL service is running. From the server: `docker compose logs -f postgres`.
 
 **Summarization returns empty thoughts**
 Some Q&A pairs are too simple (e.g., "what time is it?"). This is expected — the LLM is designed to be selective. Try `--verbose` to see what's being skipped.
 
 **"Failed to generate embedding"**
-Check your OpenRouter API key has credits and access to `text-embedding-3-small`. Test with:
+Check that your LiteLLM instance is running and your `LITELLM_API_KEY` is valid. Test with:
 ```bash
-curl https://openrouter.ai/api/v1/embeddings \
-  -H "Authorization: Bearer $OPENROUTER_API_KEY" \
+curl "${LITELLM_BASE_URL}/embeddings" \
+  -H "Authorization: Bearer $LITELLM_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model":"openai/text-embedding-3-small","input":"test"}'
+  -d '{"model":"text-embedding-3-small","input":"test"}'
 ```
 
 **Re-running imports**
-The sync log (`perplexity-sync-log.json`) prevents duplicates. Delete it to re-import everything, or edit it to remove specific entries.
+The sync log (`perplexity-sync-log.json`) prevents duplicates. Delete it to re-import everything, or edit it to remove specific entries. Database-level fingerprinting catches any remaining duplicates.
 
 **Large exports**
-If you have hundreds of conversations, the run may take a while due to rate limiting (0.2s between ingests). This is intentional — Supabase REST has rate limits. Grab a coffee.
+If you have hundreds of conversations, the run may take a while due to rate limiting (0.2s between ingests). This is intentional to avoid overwhelming LiteLLM. Grab a coffee.

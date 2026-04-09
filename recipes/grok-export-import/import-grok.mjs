@@ -9,24 +9,24 @@
  *   node import-grok.mjs /path/to/grok-export.json [--dry-run] [--skip N] [--limit N]
  */
 
-import { createClient } from "@supabase/supabase-js";
+import pg from "pg";
 import { createHash } from "crypto";
 import { readFile } from "fs/promises";
 import { config } from "dotenv";
 
 config();
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || "openai/text-embedding-3-small";
+const DATABASE_URL = process.env.DATABASE_URL;
+const LITELLM_BASE_URL = process.env.LITELLM_BASE_URL || "http://localhost:4000/v1";
+const LITELLM_API_KEY = process.env.LITELLM_API_KEY;
+const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || "text-embedding-3-small";
 
-if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !OPENROUTER_API_KEY) {
-  console.error("Missing required env vars: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, OPENROUTER_API_KEY");
+if (!DATABASE_URL || !LITELLM_API_KEY) {
+  console.error("Missing required env vars: DATABASE_URL, LITELLM_API_KEY");
   process.exit(1);
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+const pool = new pg.Pool({ connectionString: DATABASE_URL });
 
 const args = process.argv.slice(2);
 const filePath = args.find((a) => !a.startsWith("--"));
@@ -41,7 +41,7 @@ if (!filePath) {
 
 function contentFingerprint(text) {
   const normalized = text.trim().replace(/\s+/g, " ").toLowerCase();
-  return createHash("sha256").update(normalized).digest("hex");
+  return createHash("sha256").update(normalized, "utf8").digest("hex");
 }
 
 function parseMongoDate(dateObj) {
@@ -73,11 +73,6 @@ function normalizeConversation(conv) {
     });
   }
 
-  // Sort by timestamp if available
-  if (rawMessages[0]?.timestamp) {
-    // Already in order from the file typically
-  }
-
   const transcript = messages.map((m) => `${m.role}: ${m.text}`).join("\n\n");
   const content = `Conversation title: ${title}\nConversation created at: ${createdAt}\n\n${transcript}`;
 
@@ -86,10 +81,10 @@ function normalizeConversation(conv) {
 
 async function getEmbedding(text) {
   const truncated = text.length > 8000 ? text.substring(0, 8000) : text;
-  const response = await fetch("https://openrouter.ai/api/v1/embeddings", {
+  const response = await fetch(`${LITELLM_BASE_URL}/embeddings`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+      Authorization: `Bearer ${LITELLM_API_KEY}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ model: EMBEDDING_MODEL, input: truncated }),
@@ -103,21 +98,27 @@ async function getEmbedding(text) {
 }
 
 async function upsertThought(content, metadata, embedding, createdAt) {
-  const { data, error } = await supabase.rpc("upsert_thought", {
-    p_content: content,
-    p_payload: {
-      type: "reference",
-      source_type: "grok_import",
-      importance: 3,
-      quality_score: 50,
-      sensitivity_tier: "standard",
-      metadata: { ...metadata, source: "grok_import", source_type: "grok_import" },
-      embedding: JSON.stringify(embedding),
-      created_at: createdAt,
-    },
-  });
-  if (error) throw new Error(`upsert_thought failed: ${error.message}`);
-  return data;
+  const fingerprint = contentFingerprint(content);
+  const result = await pool.query(
+    `INSERT INTO thoughts (content, embedding, metadata, content_fingerprint, created_at)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (content_fingerprint) WHERE content_fingerprint IS NOT NULL
+     DO UPDATE SET metadata = EXCLUDED.metadata, updated_at = now()
+     RETURNING id, (xmax = 0) AS inserted`,
+    [
+      content,
+      JSON.stringify(embedding),
+      JSON.stringify({
+        ...metadata,
+        source: "grok_import",
+        source_type: "grok_import",
+      }),
+      fingerprint,
+      createdAt,
+    ]
+  );
+  const row = result.rows[0];
+  return { thought_id: row.id, action: row.inserted ? "inserted" : "updated" };
 }
 
 async function main() {
@@ -148,7 +149,6 @@ async function main() {
       const truncated = content.length > 30000
         ? content.substring(0, 30000) + "\n\n[... truncated]"
         : content;
-      const fingerprint = contentFingerprint(truncated);
 
       if (dryRun) {
         console.log(`[${i + 1}/${toProcess.length}] Would import: "${title}" (${truncated.length} chars)`);
@@ -159,7 +159,7 @@ async function main() {
       const embedding = await getEmbedding(truncated);
       const result = await upsertThought(
         truncated,
-        { title, content_fingerprint: fingerprint },
+        { title },
         embedding,
         createdAt
       );
@@ -173,6 +173,8 @@ async function main() {
 
   console.log();
   console.log(`Done! Imported: ${imported}, Skipped: ${skipped}, Errors: ${errors}`);
+
+  await pool.end();
 }
 
 main().catch((err) => { console.error("Fatal error:", err); process.exit(1); });

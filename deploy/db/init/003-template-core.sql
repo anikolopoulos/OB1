@@ -6,12 +6,13 @@ CREATE SCHEMA IF NOT EXISTS brain_template;
 
 -- ── Thoughts ────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS brain_template.thoughts (
-    id          UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
-    content     TEXT          NOT NULL,
-    embedding   vector(1536),
-    metadata    JSONB         NOT NULL DEFAULT '{}',
-    created_at  TIMESTAMPTZ   NOT NULL DEFAULT now(),
-    updated_at  TIMESTAMPTZ   NOT NULL DEFAULT now()
+    id                  UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+    content             TEXT          NOT NULL,
+    content_fingerprint TEXT,
+    embedding           vector(1536),
+    metadata            JSONB         NOT NULL DEFAULT '{}',
+    created_at          TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ   NOT NULL DEFAULT now()
 );
 
 -- HNSW index for fast approximate nearest-neighbor search on embeddings
@@ -27,6 +28,11 @@ CREATE INDEX IF NOT EXISTS idx_thoughts_metadata_gin
 -- Descending index on created_at for chronological listing
 CREATE INDEX IF NOT EXISTS idx_thoughts_created_at_desc
     ON brain_template.thoughts (created_at DESC);
+
+-- Content fingerprint: SHA-256 hash for idempotent upserts during imports
+CREATE UNIQUE INDEX IF NOT EXISTS idx_thoughts_fingerprint
+    ON brain_template.thoughts (content_fingerprint)
+    WHERE content_fingerprint IS NOT NULL;
 
 -- Slack dedup: ensure one thought per Slack timestamp within the slack source
 CREATE UNIQUE INDEX IF NOT EXISTS idx_thoughts_slack_dedup

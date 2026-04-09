@@ -7,5 +7,7 @@
     "import": "node import-google-activity.mjs",
     "dry-run": "node import-google-activity.mjs --dry-run --limit 5"
   },
-  "dependencies": {}
+  "dependencies": {
+    "pg": "^8.13.0"
+  }
 }

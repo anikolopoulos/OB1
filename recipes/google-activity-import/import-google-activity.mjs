@@ -11,22 +11,24 @@
  *   node import-google-activity.mjs ./Takeout/My\ Activity --dry-run --limit 5
  *
  * Environment variables:
- *   SUPABASE_URL              Supabase project URL
- *   SUPABASE_SERVICE_ROLE_KEY Supabase service role key
- *   OPENROUTER_API_KEY        OpenRouter API key (for summarization + embeddings)
+ *   DATABASE_URL       PostgreSQL connection string
+ *   LITELLM_BASE_URL   LiteLLM base URL (default: http://localhost:4000/v1)
+ *   LITELLM_API_KEY    LiteLLM API key
+ *   EMBEDDING_MODEL    Embedding model name (default: text-embedding-3-small)
  */
 
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync } from "fs";
 import { join, basename } from "path";
 import { createHash } from "crypto";
+import pg from "pg";
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
-const SUPABASE_URL = process.env.SUPABASE_URL || "";
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "";
+const DATABASE_URL = process.env.DATABASE_URL || "";
+const LITELLM_BASE_URL = process.env.LITELLM_BASE_URL || "http://localhost:4000/v1";
+const LITELLM_API_KEY = process.env.LITELLM_API_KEY || "";
+const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || "text-embedding-3-small";
 
-const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
 const SYNC_LOG_PATH = "google-activity-sync-log.json";
 
 // Categories worth importing (skip low-signal ones like Ads, Assistant, etc.)
@@ -199,6 +201,10 @@ function hashText(text) {
   return createHash("sha256").update(text).digest("hex").slice(0, 16);
 }
 
+function computeFingerprint(text) {
+  return createHash("sha256").update(text.trim().replace(/\s+/g, " ").toLowerCase(), "utf8").digest("hex");
+}
+
 // ─── Google Takeout Parsing ─────────────────────────────────────────────────
 
 function findMyActivityFiles(dirPath) {
@@ -276,13 +282,13 @@ async function summarizeDay(category, day, entries) {
   const truncated = transcript.slice(0, 6000);
 
   const resp = await httpPost(
-    `${OPENROUTER_BASE}/chat/completions`,
+    `${LITELLM_BASE_URL}/chat/completions`,
     {
-      "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+      "Authorization": `Bearer ${LITELLM_API_KEY}`,
       "Content-Type": "application/json",
     },
     {
-      model: "openai/gpt-4o-mini",
+      model: "gpt-4o-mini",
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: SUMMARIZATION_PROMPT },
@@ -315,13 +321,13 @@ async function generateEmbedding(text) {
   const truncated = text.slice(0, 8000);
 
   const resp = await httpPost(
-    `${OPENROUTER_BASE}/embeddings`,
+    `${LITELLM_BASE_URL}/embeddings`,
     {
-      "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+      "Authorization": `Bearer ${LITELLM_API_KEY}`,
       "Content-Type": "application/json",
     },
     {
-      model: "openai/text-embedding-3-small",
+      model: EMBEDDING_MODEL,
       input: truncated,
     }
   );
@@ -343,42 +349,26 @@ async function generateEmbedding(text) {
 
 // ─── Ingestion ──────────────────────────────────────────────────────────────
 
-async function ingestThought(content, metadata) {
+async function ingestThought(pool, content, metadata) {
   const embedding = await generateEmbedding(content);
   if (!embedding) {
     return { ok: false, error: "Failed to generate embedding" };
   }
 
-  const resp = await httpPost(
-    `${SUPABASE_URL}/rest/v1/thoughts`,
-    {
-      "Content-Type": "application/json",
-      "apikey": SUPABASE_SERVICE_ROLE_KEY,
-      "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      "Prefer": "return=minimal",
-    },
-    {
-      content,
-      embedding,
-      metadata,
-    }
-  );
+  const fingerprint = computeFingerprint(content);
 
-  if (!resp) {
-    return { ok: false, error: "No response from Supabase" };
+  try {
+    await pool.query(
+      `INSERT INTO thoughts (content, embedding, metadata, content_fingerprint)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (content_fingerprint) WHERE content_fingerprint IS NOT NULL
+       DO UPDATE SET metadata = EXCLUDED.metadata`,
+      [content, JSON.stringify(embedding), JSON.stringify(metadata), fingerprint]
+    );
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
   }
-
-  if (resp.status !== 200 && resp.status !== 201) {
-    let detail;
-    try {
-      detail = await resp.json();
-    } catch {
-      detail = await resp.text();
-    }
-    return { ok: false, error: `HTTP ${resp.status}: ${JSON.stringify(detail)}` };
-  }
-
-  return { ok: true };
 }
 
 // ─── Main ───────────────────────────────────────────────────────────────────
@@ -394,24 +384,19 @@ async function main() {
 
   // Validate env vars for live mode
   if (!config.dryRun) {
-    if (!SUPABASE_URL) {
-      console.error("Error: SUPABASE_URL environment variable required.");
-      console.error("Set it to your Supabase project URL (e.g., https://xxxxx.supabase.co)");
+    if (!DATABASE_URL) {
+      console.error("Error: DATABASE_URL environment variable required.");
+      console.error("Set it to your PostgreSQL connection string (e.g., postgresql://ob1:password@localhost:5432/ob1)");
       process.exit(1);
     }
-    if (!SUPABASE_SERVICE_ROLE_KEY) {
-      console.error("Error: SUPABASE_SERVICE_ROLE_KEY environment variable required.");
-      process.exit(1);
-    }
-    if (!OPENROUTER_API_KEY) {
-      console.error("Error: OPENROUTER_API_KEY required for embedding generation.");
-      console.error("Get one at https://openrouter.ai/keys");
+    if (!LITELLM_API_KEY) {
+      console.error("Error: LITELLM_API_KEY required for embedding generation.");
       process.exit(1);
     }
   }
 
-  if (!config.raw && !OPENROUTER_API_KEY) {
-    console.error("Error: OPENROUTER_API_KEY required for summarization.");
+  if (!config.raw && !LITELLM_API_KEY) {
+    console.error("Error: LITELLM_API_KEY required for summarization.");
     console.error("Use --raw to skip summarization and insert grouped entries as-is.");
     process.exit(1);
   }
@@ -434,7 +419,7 @@ async function main() {
 
   // Display configuration
   const mode = config.dryRun ? "DRY RUN" : "LIVE";
-  const summarizeMode = config.raw ? "raw (no summarization)" : "openrouter (gpt-4o-mini)";
+  const summarizeMode = config.raw ? "raw (no summarization)" : "litellm (gpt-4o-mini)";
   console.log(`  Mode:        ${mode}`);
   console.log(`  Summarizer:  ${summarizeMode}`);
   if (config.after) console.log(`  After:       ${config.after}`);
@@ -443,6 +428,9 @@ async function main() {
   console.log();
 
   const syncLog = loadSyncLog();
+
+  // Set up PostgreSQL pool (only for live mode)
+  const pool = config.dryRun ? null : new pg.Pool({ connectionString: DATABASE_URL });
 
   // Counters
   let totalEntries = 0;
@@ -551,7 +539,7 @@ async function main() {
           entry_count: entries.length,
         };
 
-        const result = await ingestThought(content, metadata);
+        const result = await ingestThought(pool, content, metadata);
         if (result.ok) {
           ingested++;
           console.log(`      -> Thought ${i + 1} ingested`);
@@ -576,6 +564,8 @@ async function main() {
     }
   }
 
+  if (pool) await pool.end();
+
   // ─── Summary ────────────────────────────────────────────────────────────
 
   console.log("\n" + "─".repeat(60));
@@ -592,20 +582,6 @@ async function main() {
     console.log(`  Ingested:                ${ingested}`);
     console.log(`  Errors:                  ${errors}`);
   }
-
-  // Cost estimation
-  let summarizeCost = 0;
-  if (!config.raw && processedDays > 0) {
-    // gpt-4o-mini via OpenRouter: ~$0.15/1M input, ~$0.60/1M output
-    const estInputTokens = processedDays * 600;
-    const estOutputTokens = processedDays * 150;
-    summarizeCost = (estInputTokens * 0.15 / 1_000_000) + (estOutputTokens * 0.60 / 1_000_000);
-  }
-  const embeddingCost = thoughtsGenerated * 100 * 0.02 / 1_000_000;
-  const totalCost = summarizeCost + embeddingCost;
-  console.log(`  Est. API cost:           $${totalCost.toFixed(4)}`);
-  if (summarizeCost > 0) console.log(`    Summarization:         $${summarizeCost.toFixed(4)}`);
-  if (embeddingCost > 0) console.log(`    Embeddings:            $${embeddingCost.toFixed(4)}`);
   console.log("─".repeat(60));
 }
 

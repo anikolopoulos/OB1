@@ -14,15 +14,14 @@
 
 ## What It Does
 
-Parses Google Blogger's Atom XML export format and imports blog posts and comments as thoughts with embeddings. Works with any standard Atom feed export. Blog posts are stored as `type: journal` thoughts.
+Parses Google Blogger's Atom XML export format and imports blog posts and comments as thoughts with embeddings. Works with any standard Atom feed export. Blog posts are stored as thoughts with `source_type: blogger_import`.
 
 ## Prerequisites
 
 - Working Open Brain setup ([guide](../../docs/01-getting-started.md))
-- The **content-fingerprint-dedup** primitive installed (provides the `upsert_thought` RPC function used for deduplication)
 - **Blogger export files** — `.atom` files from Google Blogger
 - **Node.js 18+** installed
-- **OpenRouter API key** for embedding generation
+- **LiteLLM API key** for embedding generation
 
 ## Credential Tracker
 
@@ -31,11 +30,8 @@ JOURNALS/BLOGGER IMPORT -- CREDENTIAL TRACKER
 --------------------------------------
 
 FROM YOUR OPEN BRAIN SETUP
-  Supabase URL:          ____________
-  Service Role Key:      ____________
-
-FROM OPENROUTER
-  API Key:               ____________
+  DATABASE_URL:          ____________
+  LiteLLM API Key:       ____________
 
 --------------------------------------
 ```
@@ -63,9 +59,9 @@ FROM OPENROUTER
 
 4. **Create `.env`** with your credentials (see `.env.example`):
    ```env
-   SUPABASE_URL=https://your-project.supabase.co
-   SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-   OPENROUTER_API_KEY=sk-or-v1-your-key
+   DATABASE_URL=postgresql://ob1:password@localhost:5432/ob1
+   LITELLM_BASE_URL=http://localhost:4000/v1
+   LITELLM_API_KEY=your-litellm-api-key
    ```
 
 5. **Preview what will be imported** (dry run):
@@ -81,11 +77,12 @@ FROM OPENROUTER
 ## Expected Outcome
 
 After running the import:
-- Each blog post becomes a thought with `type: journal` and `source_type: blogger_import`
+- Each blog post becomes a thought with `source_type: blogger_import`
 - Post titles and publication dates are preserved
 - HTML content is stripped to plain text (line breaks preserved)
 - Blog comments are imported separately
 - Settings and template entries are automatically filtered out
+- All content deduplicated via SHA-256 content fingerprint — re-running is safe
 
 **Scale reference:** Tested with 3,000+ blog posts across multiple blogs imported successfully.
 
@@ -99,3 +96,9 @@ The HTML stripper handles common tags and entities. If you see raw HTML in your 
 
 **Issue: Wrong dates on posts**
 The parser uses the `<published>` tag from the Atom feed. If dates look wrong, check the timezone in your Blogger export settings.
+
+**Issue: Embedding errors**
+Check that `LITELLM_API_KEY` is valid and your LiteLLM instance is reachable at `LITELLM_BASE_URL`. Test with: `curl $LITELLM_BASE_URL/models -H "Authorization: Bearer $LITELLM_API_KEY"`.
+
+**Issue: Database connection errors**
+Verify `DATABASE_URL` is correct and PostgreSQL is running. Test with: `psql $DATABASE_URL -c "SELECT 1;"`.

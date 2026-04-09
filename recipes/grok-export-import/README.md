@@ -11,7 +11,7 @@ Parses xAI Grok conversation exports (JSON format with MongoDB-style dates) and 
 - Working Open Brain setup ([guide](../../docs/01-getting-started.md))
 - **Grok data export** — JSON file from X/Grok
 - **Node.js 18+** installed
-- **OpenRouter API key** for embedding generation
+- **LiteLLM API key** for embedding generation
 
 ## Credential Tracker
 
@@ -20,11 +20,8 @@ GROK EXPORT IMPORT -- CREDENTIAL TRACKER
 --------------------------------------
 
 FROM YOUR OPEN BRAIN SETUP
-  Supabase URL:          ____________
-  Service Role Key:      ____________
-
-FROM OPENROUTER
-  API Key:               ____________
+  DATABASE_URL:          ____________
+  LiteLLM API Key:       ____________
 
 --------------------------------------
 ```
@@ -44,9 +41,9 @@ FROM OPENROUTER
 
 3. **Create `.env`** with your credentials (see `.env.example`):
    ```env
-   SUPABASE_URL=https://your-project.supabase.co
-   SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-   OPENROUTER_API_KEY=sk-or-v1-your-key
+   DATABASE_URL=postgresql://ob1:password@localhost:5432/ob1
+   LITELLM_BASE_URL=http://localhost:4000/v1
+   LITELLM_API_KEY=your-litellm-api-key
    ```
 
 4. **Preview what will be imported** (dry run):
@@ -64,6 +61,7 @@ FROM OPENROUTER
 After running the import:
 - Each Grok conversation becomes a thought with `source_type: grok_import`
 - MongoDB-style dates (`$date.$numberLong`) are properly parsed to ISO timestamps
+- Conversations are deduplicated via SHA-256 content fingerprint — re-running is safe
 - Running `search_thoughts` finds relevant Grok conversations
 
 **Scale reference:** Tested with 750+ Grok conversations imported successfully.
@@ -75,3 +73,9 @@ Grok uses MongoDB's `{$date: {$numberLong: "..."}}` format. The script handles t
 
 **Issue: "conversations" field not found**
 The script looks for `parsed.conversations` first, then treats the root as an array. Different Grok export versions may structure the data differently.
+
+**Issue: Embedding errors**
+Check that `LITELLM_API_KEY` is valid and your LiteLLM instance is reachable at `LITELLM_BASE_URL`. Test with: `curl $LITELLM_BASE_URL/models -H "Authorization: Bearer $LITELLM_API_KEY"`.
+
+**Issue: Database connection errors**
+Verify `DATABASE_URL` is correct and PostgreSQL is running. Test with: `psql $DATABASE_URL -c "SELECT 1;"`.

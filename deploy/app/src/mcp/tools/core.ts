@@ -198,7 +198,7 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
       ]);
 
       const { rows } = await ctx.query(
-        'INSERT INTO thoughts (content, embedding, metadata) VALUES ($1, $2::vector, $3::jsonb) RETURNING id',
+        'SELECT * FROM upsert_thought($1, $2::vector, $3::jsonb)',
         [content, JSON.stringify(embedding), JSON.stringify({ ...metadata, source: 'mcp' })]
       );
 
@@ -206,8 +206,11 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
         return errorResult('Failed to capture thought: no row returned');
       }
 
+      const { is_new } = rows[0] as { id: string; fingerprint: string; is_new: boolean };
       const meta = metadata as Record<string, unknown>;
-      let confirmation = `Captured as ${meta.type ?? 'thought'}`;
+      let confirmation = is_new
+        ? `Captured as ${meta.type ?? 'thought'}`
+        : `Updated existing thought (duplicate content)`;
       if (Array.isArray(meta.topics) && meta.topics.length)
         confirmation += ` — ${(meta.topics as string[]).join(', ')}`;
       if (Array.isArray(meta.people) && meta.people.length)
