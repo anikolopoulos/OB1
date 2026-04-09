@@ -10,9 +10,10 @@ import { extractMetadata } from './ai/metadata.js';
 import { createMcpServer } from './mcp/server-factory.js';
 import { adminRouter } from './admin/router.js';
 import { slackRouter } from './slack/router.js';
+import { restRouter } from './rest/router.js';
 import type { ToolContext } from './mcp/tool-context.js';
 
-// ── Hono app (admin, slack, health — everything except /mcp) ─────────────────
+// ── Hono app (admin, slack, rest, health — everything except /mcp) ────────────
 const app = new Hono();
 
 app.get('/health', (c) =>
@@ -21,6 +22,7 @@ app.get('/health', (c) =>
 
 app.route('/admin', adminRouter);
 app.route('/slack', slackRouter);
+app.route('/api', restRouter);
 
 app.onError((err, c) => {
   console.error('[server] Unhandled error:', err);
@@ -114,6 +116,7 @@ server.listen(port, () => {
   console.log(`  MCP:   POST /mcp (Node.js native streaming)`);
   console.log(`  Admin: /admin/*`);
   console.log(`  Slack: POST /slack/events`);
+  console.log(`  REST:  /api/*`);
   console.log(`  Health: GET /health`);
 
   if (!config.SLACK_SIGNING_SECRET) {

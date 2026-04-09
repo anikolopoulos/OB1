@@ -34,6 +34,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_thoughts_fingerprint
     ON brain_template.thoughts (content_fingerprint)
     WHERE content_fingerprint IS NOT NULL;
 
+-- Full-text search on content for keyword/phrase queries
+CREATE INDEX IF NOT EXISTS idx_thoughts_content_fts
+    ON brain_template.thoughts USING gin (to_tsvector('english', content));
+
 -- Slack dedup: ensure one thought per Slack timestamp within the slack source
 CREATE UNIQUE INDEX IF NOT EXISTS idx_thoughts_slack_dedup
     ON brain_template.thoughts ((metadata->>'slack_ts'))

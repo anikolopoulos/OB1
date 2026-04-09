@@ -26,12 +26,10 @@ export default async function ThoughtDetailPage({
   const session = await getSession();
   const excludeRestricted = !session.restrictedUnlocked;
   const { id } = await params;
-  const thoughtId = parseInt(id, 10);
-  if (isNaN(thoughtId)) notFound();
 
   let thought;
   try {
-    thought = await fetchThought(apiKey, thoughtId, excludeRestricted);
+    thought = await fetchThought(apiKey, id, excludeRestricted);
   } catch (err) {
     if (err instanceof ApiError && err.status === 403) {
       return (
@@ -55,7 +53,7 @@ export default async function ThoughtDetailPage({
 
   let reflections: Awaited<ReturnType<typeof fetchReflections>> = [];
   try {
-    reflections = await fetchReflections(apiKey, thoughtId);
+    reflections = await fetchReflections(apiKey, id);
   } catch {
     reflections = [];
   }
@@ -70,13 +68,13 @@ export default async function ThoughtDetailPage({
     const content = formData.get("content") as string;
     const type = formData.get("type") as string;
     const importance = parseInt(formData.get("importance") as string, 10);
-    await updateThought(apiKey, thoughtId, { content, type, importance });
+    await updateThought(apiKey, id, { content, type, importance });
   }
 
   async function deleteAction() {
     "use server";
     const { apiKey } = await requireSessionOrRedirect();
-    await deleteThought(apiKey, thoughtId);
+    await deleteThought(apiKey, id);
   }
 
   return (
