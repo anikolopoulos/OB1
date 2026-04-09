@@ -142,10 +142,30 @@ docker compose logs -f app        # App logs
 docker compose logs -f postgres   # Database logs
 ```
 
-### Update the server
+### Deploy to Hetzner
+
+The live server at `openbrain.leadetic.com` does not have a git clone — only the `deploy/` contents are copied. The deploy process is:
+
 ```bash
-git pull && docker compose build app && docker compose up -d app
+# 1. Push to GitHub
+git push origin main
+
+# 2. Sync deploy files to the server (app code + DB init scripts)
+rsync -avz --delete deploy/app/ ailab-root:/opt/ai-lab/openbrain/app/
+rsync -avz --delete deploy/db/ ailab-root:/opt/ai-lab/openbrain/db/
+
+# 3. If SQL schema changed: apply migration manually to existing schemas
+#    (init scripts only run on first boot — existing brains need manual ALTER/CREATE)
+ssh ailab-root "docker exec -i postgres psql -U ailab -d openbrain" < migration.sql
+
+# 4. Rebuild and restart
+ssh ailab-root "cd /opt/ai-lab && docker compose build openbrain && docker compose up -d openbrain"
+
+# 5. Verify
+ssh ailab-root "curl -s https://openbrain.leadetic.com/health"
 ```
+
+**Important:** The docker-compose service is named `openbrain` (not `app`). Tables are owned by the `ailab` user, not `openbrain` — run DDL migrations as `ailab`.
 
 ## Guard Rails
 
