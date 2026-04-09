@@ -37,28 +37,117 @@ function verifySlackSignature(
   }
 }
 
+const MAX_RETRIES = 2;
+const RETRY_DELAY_MS = 3000;
+
+async function processSlackMessage(
+  schemaName: string,
+  text: string,
+  channelId: string,
+  slackTs: string | undefined,
+  slackUser: string | undefined,
+): Promise<void> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      let isNew = false;
+
+      await withBrainSchema(schemaName, async (query) => {
+        const [embedding, metadata] = await Promise.all([
+          getEmbedding(text),
+          extractMetadata(text),
+        ]);
+
+        const enrichedMetadata = {
+          ...metadata,
+          source: 'slack',
+          slack_channel: channelId,
+          slack_ts: slackTs,
+          slack_user: slackUser,
+        };
+
+        const result = await query(
+          'SELECT * FROM upsert_thought($1, $2::vector, $3::jsonb)',
+          [text, JSON.stringify(embedding), JSON.stringify(enrichedMetadata)],
+        );
+        isNew = result.rows[0]?.is_new ?? true;
+      });
+
+      // Success — send confirmation reply
+      await sendSlackReply(channelId, slackTs, isNew ? 'Captured.' : 'Already captured.');
+      return;
+    } catch (err) {
+      lastError = err;
+      const isTransient = isTransientError(err);
+      console.error(
+        `[slack] Error processing message (attempt ${attempt + 1}/${MAX_RETRIES + 1}, ${isTransient ? 'will retry' : 'non-retryable'}):`,
+        { schema: schemaName, channel: channelId, ts: slackTs, error: String(err) },
+      );
+
+      if (!isTransient || attempt === MAX_RETRIES) break;
+      await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * (attempt + 1)));
+    }
+  }
+
+  // All retries exhausted — notify user in Slack
+  console.error('[slack] Message capture failed after retries:', {
+    schema: schemaName, channel: channelId, ts: slackTs, error: String(lastError),
+  });
+  await sendSlackReply(channelId, slackTs, 'Failed to capture this message. Check server logs.');
+}
+
+function isTransientError(err: unknown): boolean {
+  const msg = String(err).toLowerCase();
+  return msg.includes('econnrefused') ||
+    msg.includes('econnreset') ||
+    msg.includes('timeout') ||
+    msg.includes('too many clients') ||
+    msg.includes('connection terminated');
+}
+
+async function sendSlackReply(channelId: string, threadTs: string | undefined, text: string): Promise<void> {
+  const botToken = config.SLACK_BOT_TOKEN;
+  if (!botToken) return;
+
+  try {
+    await fetch('https://slack.com/api/chat.postMessage', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${botToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ channel: channelId, thread_ts: threadTs, text }),
+    });
+  } catch (err) {
+    console.warn('[slack] Failed to send reply:', err);
+  }
+}
+
 // ── Slack event webhook handler ───────────────────────────────────────────────
 export async function handleSlackEvent(c: Context): Promise<Response> {
   const rawBody = await c.req.text();
 
-  // Verify Slack request signature if signing secret is configured
-  if (config.SLACK_SIGNING_SECRET) {
-    const timestamp = c.req.header('x-slack-request-timestamp') ?? '';
-    const signature = c.req.header('x-slack-signature') ?? '';
+  // Verify Slack request signature — reject all requests if signing secret is not configured
+  if (!config.SLACK_SIGNING_SECRET) {
+    return c.json({ error: 'Slack webhook disabled: SLACK_SIGNING_SECRET not configured' }, 503);
+  }
 
-    if (!timestamp || !signature) {
-      return c.json({ error: 'Missing Slack signature headers' }, 401);
-    }
+  const timestamp = c.req.header('x-slack-request-timestamp') ?? '';
+  const signature = c.req.header('x-slack-signature') ?? '';
 
-    // Reject requests older than 5 minutes (replay protection)
-    const age = Math.abs(Date.now() / 1000 - parseInt(timestamp, 10));
-    if (age > 300) {
-      return c.json({ error: 'Request too old' }, 401);
-    }
+  if (!timestamp || !signature) {
+    return c.json({ error: 'Missing Slack signature headers' }, 401);
+  }
 
-    if (!verifySlackSignature(config.SLACK_SIGNING_SECRET, timestamp, rawBody, signature)) {
-      return c.json({ error: 'Invalid signature' }, 401);
-    }
+  // Reject requests older than 5 minutes (replay protection)
+  const age = Math.abs(Date.now() / 1000 - parseInt(timestamp, 10));
+  if (age > 300) {
+    return c.json({ error: 'Request too old' }, 401);
+  }
+
+  if (!verifySlackSignature(config.SLACK_SIGNING_SECRET, timestamp, rawBody, signature)) {
+    return c.json({ error: 'Invalid signature' }, 401);
   }
 
   let body: SlackRequestBody;
@@ -113,55 +202,11 @@ export async function handleSlackEvent(c: Context): Promise<Response> {
   // Respond immediately to avoid Slack's 3-second timeout
   const response = c.json({ ok: true });
 
-  // Process the message asynchronously
-  setImmediate(async () => {
-    try {
-      let isNew = false;
-
-      await withBrainSchema(schemaName, async (query) => {
-        // Generate embedding and extract metadata in parallel
-        const [embedding, metadata] = await Promise.all([
-          getEmbedding(text),
-          extractMetadata(text),
-        ]);
-
-        const enrichedMetadata = {
-          ...metadata,
-          source: 'slack',
-          slack_channel: channelId,
-          slack_ts: slackTs,
-          slack_user: event.user,
-        };
-
-        const result = await query(
-          'SELECT upsert_thought($1, $2::vector, $3::jsonb) AS is_new',
-          [text, JSON.stringify(embedding), JSON.stringify(enrichedMetadata)],
-        );
-        isNew = result.rows[0]?.is_new ?? true;
-      });
-
-      // Reply in Slack thread to confirm capture
-      const botToken = config.SLACK_BOT_TOKEN;
-
-      if (botToken) {
-        await fetch('https://slack.com/api/chat.postMessage', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${botToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            channel: channelId,
-            thread_ts: slackTs,
-            text: isNew ? 'Captured.' : 'Already captured.',
-          }),
-        }).catch((err) => {
-          console.warn('[slack] Failed to send confirmation reply:', err);
-        });
-      }
-    } catch (err) {
-      console.error('[slack] Error processing message:', err);
-    }
+  // Process the message asynchronously with retry for transient failures
+  setImmediate(() => {
+    processSlackMessage(schemaName, text, channelId, slackTs, event.user).catch(
+      () => {} // Final fallback — all retries exhausted, already logged
+    );
   });
 
   return response;

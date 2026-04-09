@@ -115,4 +115,8 @@ server.listen(port, () => {
   console.log(`  Admin: /admin/*`);
   console.log(`  Slack: POST /slack/events`);
   console.log(`  Health: GET /health`);
+
+  if (!config.SLACK_SIGNING_SECRET) {
+    console.warn('[startup] SLACK_SIGNING_SECRET not set — Slack webhook will reject all requests');
+  }
 });

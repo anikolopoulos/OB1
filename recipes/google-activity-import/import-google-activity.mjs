@@ -158,7 +158,10 @@ Examples:
 function loadSyncLog() {
   try {
     return JSON.parse(readFileSync(SYNC_LOG_PATH, "utf8"));
-  } catch {
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      console.warn(`Warning: Sync log corrupted (${err.message}), starting fresh. Previous imports will be re-verified via content fingerprints.`);
+    }
     return { ingested_days: {}, last_sync: "" };
   }
 }
@@ -222,7 +225,11 @@ function findMyActivityFiles(dirPath) {
           walk(full, depth + 1);
         }
       }
-    } catch { /* skip unreadable dirs */ }
+    } catch (err) {
+      if (err.code !== 'ENOENT' && err.code !== 'EACCES') {
+        console.warn(`  Skipped directory ${d}: ${err.message}`);
+      }
+    }
   }
 
   walk(dirPath, 0);

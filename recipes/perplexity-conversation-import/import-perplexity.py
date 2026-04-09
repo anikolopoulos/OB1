@@ -104,7 +104,11 @@ def load_sync_log():
     try:
         with open(SYNC_LOG_PATH) as f:
             return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+    except FileNotFoundError:
+        return {"ingested_ids": {}, "last_sync": ""}
+    except json.JSONDecodeError as e:
+        print(f"Warning: Sync log corrupted ({e}), starting fresh. "
+              "Previous imports will be re-verified via content fingerprints.")
         return {"ingested_ids": {}, "last_sync": ""}
 
 

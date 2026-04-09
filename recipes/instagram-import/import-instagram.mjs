@@ -135,7 +135,9 @@ async function processMessages(activityDir) {
           const data = JSON.parse(raw);
           const messages = data.messages || [];
           allMessages.push(...messages);
-        } catch { /* skip corrupt files */ }
+        } catch (err) {
+          if (err.code !== 'ENOENT') console.warn(`  Skipped ${msgFile}: ${err.message}`);
+        }
       }
 
       if (allMessages.length < 3) continue;
@@ -165,7 +167,9 @@ async function processMessages(activityDir) {
         title: `Instagram DM: ${participantName} (${allMessages.length} messages)`,
       });
     }
-  } catch { /* messages dir not found */ }
+  } catch (err) {
+    if (err.code !== 'ENOENT') console.warn(`  Messages directory error: ${err.message}`);
+  }
 
   return items;
 }
@@ -201,7 +205,9 @@ async function processComments(activityDir) {
             }
           }
         }
-      } catch { /* skip */ }
+      } catch (err) {
+        if (err.code !== 'ENOENT') console.warn(`  Skipped comment file: ${err.message}`);
+      }
     }
 
     if (allComments.length > 0) {
@@ -219,7 +225,9 @@ async function processComments(activityDir) {
         });
       }
     }
-  } catch { /* comments dir not found */ }
+  } catch (err) {
+    if (err.code !== 'ENOENT') console.warn(`  Comments directory error: ${err.message}`);
+  }
 
   return items;
 }
@@ -259,7 +267,9 @@ async function processPosts(activityDir) {
         });
       }
     }
-  } catch { /* posts file not found */ }
+  } catch (err) {
+    if (err.code !== 'ENOENT') console.warn(`  Posts file error: ${err.message}`);
+  }
 
   return items;
 }

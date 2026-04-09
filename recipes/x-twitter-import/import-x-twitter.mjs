@@ -241,7 +241,9 @@ async function main() {
         const batches = processTweets(tweets);
         allItems.push(...batches.map((b) => ({ ...b, sourceType: "x_twitter_import" })));
         console.log(`Tweets: ${tweets.length} tweets → ${batches.length} batched thoughts`);
-      } catch { /* file not found */ }
+      } catch (err) {
+        if (err.code !== 'ENOENT') console.warn(`  Error reading ${name}: ${err.message}`);
+      }
     }
   }
 
@@ -254,7 +256,9 @@ async function main() {
         const convs = processDMs(dms);
         allItems.push(...convs.map((c) => ({ ...c, sourceType: "x_twitter_import" })));
         console.log(`DMs: ${dms.length} conversations → ${convs.length} thoughts`);
-      } catch { /* file not found */ }
+      } catch (err) {
+        if (err.code !== 'ENOENT') console.warn(`  Error reading ${name}: ${err.message}`);
+      }
     }
   }
 
@@ -267,7 +271,9 @@ async function main() {
         const chats = processGrokChats(grok);
         allItems.push(...chats.map((c) => ({ ...c, sourceType: "x_twitter_import" })));
         console.log(`Grok chats: ${grok.length} messages → ${chats.length} thoughts`);
-      } catch { /* file not found */ }
+      } catch (err) {
+        if (err.code !== 'ENOENT') console.warn(`  Error reading ${name}: ${err.message}`);
+      }
     }
   }
 

@@ -17,10 +17,12 @@ battle-tested on 4,600+ Obsidian notes.
 import argparse
 import hashlib
 import json
+import logging
 import os
 import re
 import sys
 import time
+import yaml
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -155,11 +157,13 @@ def parse_note(path: Path):
         post = frontmatter.load(str(path))
         meta = dict(post.metadata)
         body = post.content
-    except Exception:
+    except (yaml.YAMLError, UnicodeDecodeError, ValueError) as e:
+        logging.debug("Frontmatter parse failed for %s: %s", path.name, e)
         meta = {}
         try:
             body = path.read_text(errors='replace')
-        except Exception:
+        except OSError as e2:
+            logging.warning("Cannot read %s: %s", path.name, e2)
             body = ''
 
     # Extract wikilinks from body + frontmatter values
@@ -424,8 +428,9 @@ def load_sync_log(recipe_dir: Path) -> dict:
     if log_path.exists():
         try:
             return json.loads(log_path.read_text())
-        except Exception:
-            pass
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"Warning: Sync log corrupted ({e}), starting fresh. "
+                  "Previous imports will be re-verified via content fingerprints.")
     return {"vault_path": "", "last_run": "", "notes": {}}
 
 
