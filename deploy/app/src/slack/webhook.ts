@@ -80,12 +80,16 @@ async function processSlackMessage(
     } catch (err) {
       lastError = err;
       const isTransient = isTransientError(err);
+      const willRetry = isTransient && attempt < MAX_RETRIES;
+      let retryLabel = 'non-retryable';
+      if (willRetry) retryLabel = 'will retry';
+      else if (isTransient) retryLabel = 'retries exhausted';
       console.error(
-        `[slack] Error processing message (attempt ${attempt + 1}/${MAX_RETRIES + 1}, ${isTransient ? 'will retry' : 'non-retryable'}):`,
+        `[slack] Error processing message (attempt ${attempt + 1}/${MAX_RETRIES + 1}, ${retryLabel}):`,
         { schema: schemaName, channel: channelId, ts: slackTs, error: String(err) },
       );
 
-      if (!isTransient || attempt === MAX_RETRIES) break;
+      if (!willRetry) break;
       await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * (attempt + 1)));
     }
   }
@@ -128,9 +132,22 @@ async function sendSlackReply(channelId: string, threadTs: string | undefined, t
 export async function handleSlackEvent(c: Context): Promise<Response> {
   const rawBody = await c.req.text();
 
-  // Verify Slack request signature — reject all requests if signing secret is not configured
+  let body: SlackRequestBody;
+  try {
+    body = JSON.parse(rawBody);
+  } catch {
+    return c.json({ error: 'Invalid JSON in request body' }, 400);
+  }
+
+  // URL verification challenge — allow through without signing secret so
+  // operators can set up the endpoint URL in Slack before configuring the secret
+  if (body.type === 'url_verification') {
+    return c.json({ challenge: body.challenge });
+  }
+
+  // All other requests require a configured signing secret
   if (!config.SLACK_SIGNING_SECRET) {
-    return c.json({ error: 'Slack webhook disabled: SLACK_SIGNING_SECRET not configured' }, 503);
+    return c.json({ error: 'Slack webhook disabled: SLACK_SIGNING_SECRET not configured' }, 403);
   }
 
   const timestamp = c.req.header('x-slack-request-timestamp') ?? '';
@@ -148,18 +165,6 @@ export async function handleSlackEvent(c: Context): Promise<Response> {
 
   if (!verifySlackSignature(config.SLACK_SIGNING_SECRET, timestamp, rawBody, signature)) {
     return c.json({ error: 'Invalid signature' }, 401);
-  }
-
-  let body: SlackRequestBody;
-  try {
-    body = JSON.parse(rawBody);
-  } catch {
-    return c.json({ error: 'Invalid JSON in request body' }, 400);
-  }
-
-  // URL verification challenge (Slack sends this when configuring the endpoint)
-  if (body.type === 'url_verification') {
-    return c.json({ challenge: body.challenge });
   }
 
   const event = body.event;
