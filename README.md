@@ -87,6 +87,13 @@ MCP server extensions, webhook receivers, and capture sources beyond Slack.
 - Email forwarding handler
 - Browser extension connector
 
+### [`/skills`](skills/) — Reusable AI client skills
+
+Plain-text skill files you can install into Claude Code, Codex, Cursor, or any compatible AI client. Smaller than recipes — just a reusable behavior, no full build required.
+- Panning for Gold (research discovery workflow)
+- Auto-capture (session close capture protocol)
+- N agentic harnesses (multi-agent orchestration patterns)
+
 ## Using a Contribution
 
 1. Browse the category folders above

@@ -18,6 +18,7 @@ recipes/        — Standalone capability builds. Open for community contributio
 schemas/        — Database table extensions. Open.
 dashboards/     — Frontend templates (Vercel/Netlify). Open.
 integrations/   — MCP extensions, webhooks, capture sources. Open.
+skills/         — Reusable AI client skills and prompt packs. Open.
 docs/           — Setup guides, FAQ, companion prompts.
 resources/      — Claude Skill, companion files.
 ```
@@ -41,6 +42,47 @@ Key deploy files:
 - `deploy/app/src/index.ts` — main entry point (raw HTTP for MCP, Hono for the rest)
 - `deploy/app/src/mcp/tools/` — all MCP tool implementations
 - `deploy/db/init/` — SQL init scripts (run automatically on first boot)
+
+## Upstream Relationship
+
+This is a fork of [NateBJones-Projects/OB1](https://github.com/NateBJones-Projects/OB1). The upstream uses **Supabase Edge Functions** for the MCP server and **OpenRouter** for AI. This fork replaces that with a **self-hosted Docker deployment** (`deploy/`) using Node.js + Hono, PostgreSQL (direct), LiteLLM, and Caddy.
+
+### Key Differences
+
+| Aspect | Upstream (Supabase) | This Fork (Docker) |
+|--------|---------------------|---------------------|
+| Database | Supabase-hosted PostgreSQL | Self-hosted PostgreSQL (pgvector container) |
+| MCP server | Supabase Edge Functions (Deno) | Node.js app (Hono + MCP SDK) in `deploy/app/` |
+| AI gateway | OpenRouter | LiteLLM (any OpenAI-compatible endpoint) |
+| Multi-tenancy | Supabase RLS (`auth.uid()`) | Schema-per-brain isolation (`brain_<slug>`) |
+| Reverse proxy | Supabase handles | Caddy / Traefik / Cloudflare |
+| Auth | Supabase Auth + service_role key | Admin API key + per-brain API keys |
+
+### What Merges Cleanly From Upstream
+
+These directories contain additive content that does not conflict with `deploy/`:
+- `skills/` — Entire directory (AI client skill packs)
+- `recipes/<new-recipe>/` — New recipe subdirectories
+- `dashboards/<new-dashboard>/` — New dashboard projects
+- `integrations/<new-integration>/` — New integration sources
+
+### What Conflicts (Needs Manual Reconciliation)
+
+These files diverge because upstream references Supabase/OpenRouter while we reference Docker/LiteLLM:
+- `CLAUDE.md`, `CONTRIBUTING.md`, `README.md`, `SECURITY.md`
+- `docs/` — Getting-started guide is entirely different
+- `.github/workflows/` — CI references Supabase patterns
+- Existing `extensions/*/README.md` and `recipes/*/README.md` — Upstream uses Supabase credential references
+
+**Note:** New recipes/skills from upstream contain Supabase/OpenRouter references in their READMEs. These are accepted as-is from the community. Our Docker deployment uses `DATABASE_URL` and `LITELLM_API_KEY` instead of `SUPABASE_URL` and `OPENROUTER_API_KEY`.
+
+### Checking for Upstream Updates
+
+```bash
+git fetch upstream
+git log --oneline HEAD..upstream/main                    # new commits
+git diff --stat HEAD..upstream/main -- skills/ recipes/  # new additive content
+```
 
 ## Common Operations
 
