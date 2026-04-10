@@ -9,20 +9,6 @@ const duplicatesParamsSchema = z.object({
   days: z.coerce.number().int().min(1).default(90),
 });
 
-interface DuplicatePair {
-  thought_id_a: string;
-  thought_id_b: string;
-  similarity: number;
-  content_a: string;
-  content_b: string;
-  type_a: string;
-  type_b: string;
-  quality_a: number;
-  quality_b: number;
-  created_a: string;
-  created_b: string;
-}
-
 // GET /api/duplicates
 //
 // Uses a self-join with cosine similarity to find near-duplicate thought pairs
@@ -41,9 +27,11 @@ export async function duplicatesHandler(c: Context): Promise<Response> {
 
   // Self-join: compare every thought against every other thought in the window,
   // keeping only the canonical pair (a.id < b.id) to avoid (A,B) + (B,A) dupes.
+  // Use LATERAL join so the inner ORDER BY ... LIMIT uses the HNSW index
+  // per thought (O(n*k) with index) instead of a full cross-join (O(n^2) scan)
   const result = await brainQuery(
     c,
-    `SELECT
+    `SELECT DISTINCT ON (LEAST(a.id, b.id), GREATEST(a.id, b.id))
         a.id                                                      AS thought_id_a,
         b.id                                                      AS thought_id_b,
         1 - (a.embedding <=> b.embedding)                        AS similarity,
@@ -56,18 +44,25 @@ export async function duplicatesHandler(c: Context): Promise<Response> {
         a.created_at                                              AS created_a,
         b.created_at                                              AS created_b
        FROM thoughts a
-       JOIN thoughts b ON a.id < b.id
+       CROSS JOIN LATERAL (
+         SELECT id, content, metadata, embedding, created_at
+           FROM thoughts
+          WHERE id != a.id
+            AND embedding IS NOT NULL
+            AND created_at >= now() - ($1 * interval '1 day')
+          ORDER BY embedding <=> a.embedding
+          LIMIT 5
+       ) b
       WHERE a.embedding IS NOT NULL
-        AND b.embedding IS NOT NULL
         AND a.created_at >= now() - ($1 * interval '1 day')
-        AND b.created_at >= now() - ($1 * interval '1 day')
         AND 1 - (a.embedding <=> b.embedding) >= $2
-      ORDER BY similarity DESC
-      LIMIT $3 OFFSET $4`,
-    [days, threshold, limit, offset],
+      ORDER BY LEAST(a.id, b.id), GREATEST(a.id, b.id), similarity DESC`,
+    [days, threshold],
   );
 
-  const pairs = result.rows as DuplicatePair[];
+  // Apply offset/limit in JS (DISTINCT ON + ORDER BY similarity requires post-processing)
+  const sorted = result.rows.sort((x: { similarity: number }, y: { similarity: number }) => y.similarity - x.similarity);
+  const paged = sorted.slice(offset, offset + limit);
 
-  return c.json({ pairs, threshold, limit, offset });
+  return c.json({ pairs: paged, threshold, limit, offset });
 }

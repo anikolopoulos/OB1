@@ -66,10 +66,10 @@ export async function extractThoughts(text: string): Promise<ExtractedItem[]> {
         }));
     }
     console.error('[extraction] Unexpected JSON shape, falling back. Raw:', raw.slice(0, 200));
-    return [{ content: text, type: 'observation' }];
+    return [{ content: text.slice(0, 2000), type: 'observation' }];
   } catch {
     console.error('[extraction] Failed to parse LLM response as JSON, falling back. Raw:', raw.slice(0, 200));
-    return [{ content: text, type: 'observation' }];
+    return [{ content: text.slice(0, 2000), type: 'observation' }];
   }
 }
 
@@ -94,22 +94,11 @@ export async function classifyItems(
     const fingerprint = fingerprints[i]!;
     const isDuplicate = existingFingerprints.has(fingerprint);
 
-    if (isDuplicate) {
-      return {
-        ...item,
-        fingerprint,
-        action: 'skip' as const,
-        reason: 'duplicate content',
-        similarity: null,
-        matched_thought_id: null,
-      };
-    }
-
     return {
       ...item,
       fingerprint,
-      action: 'add' as const,
-      reason: null,
+      action: isDuplicate ? 'skip' as const : 'add' as const,
+      reason: isDuplicate ? 'duplicate content' : null,
       similarity: null,
       matched_thought_id: null,
     };

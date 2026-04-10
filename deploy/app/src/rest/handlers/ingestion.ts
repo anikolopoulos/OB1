@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { Context } from 'hono';
 import { brainQuery } from '../router.js';
+import { withBrainSchema } from '../../db/with-schema.js';
 import { extractThoughts, classifyItems } from '../../ai/extraction.js';
 import { getEmbedding } from '../../ai/embeddings.js';
 import { extractMetadata } from '../../ai/metadata.js';
@@ -58,30 +59,26 @@ export async function ingestHandler(c: Context): Promise<Response> {
     // 3. Classify items via fingerprint check
     const classifiedItems = await classifyItems(schemaName, extractedItems);
 
-    // 4. Insert all items into ingestion_items
+    // 4. Batch-insert all items into ingestion_items (single query, single connection)
     if (classifiedItems.length > 0) {
-      for (const item of classifiedItems) {
-        await brainQuery(
-          c,
-          `INSERT INTO ingestion_items
-             (job_id, content, type, fingerprint, action, reason, similarity, matched_thought_id)
-           VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8)`,
-          [
-            jobId,
-            item.content,
-            item.type,
-            item.fingerprint,
-            item.action,
-            item.reason,
-            item.similarity,
-            item.matched_thought_id,
-          ],
-        );
+      const params: unknown[] = [];
+      const rows: string[] = [];
+      for (let i = 0; i < classifiedItems.length; i++) {
+        const item = classifiedItems[i];
+        const off = i * 8;
+        rows.push(`($${off + 1}::uuid, $${off + 2}, $${off + 3}, $${off + 4}, $${off + 5}, $${off + 6}, $${off + 7}, $${off + 8})`);
+        params.push(jobId, item.content, item.type, item.fingerprint, item.action, item.reason, item.similarity, item.matched_thought_id);
       }
+      await brainQuery(
+        c,
+        `INSERT INTO ingestion_items (job_id, content, type, fingerprint, action, reason, similarity, matched_thought_id)
+         VALUES ${rows.join(', ')}`,
+        params,
+      );
     }
 
     const extractedCount = classifiedItems.length;
-    const addCount = classifiedItems.filter((i) => i.action === 'add').length;
+    const addItems = classifiedItems.filter((i) => i.action === 'add');
     const skipCount = classifiedItems.filter((i) => i.action === 'skip').length;
 
     if (dry_run) {
@@ -101,7 +98,6 @@ export async function ingestHandler(c: Context): Promise<Response> {
     }
 
     // 5b. dry_run=false → immediately commit all 'add' items
-    const addItems = classifiedItems.filter((i) => i.action === 'add');
     let committedCount = 0;
 
     for (const item of addItems) {
@@ -135,13 +131,11 @@ export async function ingestHandler(c: Context): Promise<Response> {
     }
 
     // Mark skipped items
-    if (skipCount > 0) {
-      await brainQuery(
-        c,
-        `UPDATE ingestion_items SET status = 'skipped' WHERE job_id = $1::uuid AND action = 'skip'`,
-        [jobId],
-      );
-    }
+    await brainQuery(
+      c,
+      `UPDATE ingestion_items SET status = 'skipped' WHERE job_id = $1::uuid AND action = 'skip'`,
+      [jobId],
+    );
 
     await brainQuery(
       c,

@@ -20,7 +20,7 @@ export async function listReflections(c: Context): Promise<Response> {
   const result = await brainQuery(
     c,
     `SELECT id, thought_id, trigger_context, options, factors,
-            conclusion, confidence, reflection_type, metadata, created_at
+            conclusion, confidence, reflection_type, metadata, created_at, updated_at
        FROM reflections
       WHERE thought_id = $1::uuid
       ORDER BY created_at DESC`,
@@ -33,11 +33,11 @@ export async function listReflections(c: Context): Promise<Response> {
 // ── POST /api/thought/:id/reflection ─────────────────────────────────────────
 const createReflectionSchema = z.object({
   trigger_context: z.string().optional(),
-  options: z.array(z.object({ label: z.string() })).optional(),
-  factors: z.array(z.object({ label: z.string(), weight: z.number() })).optional(),
+  options: z.array(z.object({ label: z.string() })).default([]),
+  factors: z.array(z.object({ label: z.string(), weight: z.number() })).default([]),
   conclusion: z.string().optional(),
   confidence: z.number().min(0).max(1).optional(),
-  reflection_type: z.string().optional(),
+  reflection_type: z.string().default('decision_trace'),
 });
 
 export async function createReflection(c: Context): Promise<Response> {
@@ -68,11 +68,11 @@ export async function createReflection(c: Context): Promise<Response> {
 
   const {
     trigger_context = null,
-    options = [],
-    factors = [],
+    options,
+    factors,
     conclusion = null,
     confidence = null,
-    reflection_type = 'decision_trace',
+    reflection_type,
   } = parsed.data;
 
   const result = await brainQuery(
