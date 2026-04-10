@@ -16,7 +16,7 @@ export function ThoughtDeleteButton({
     <>
       <button
         onClick={() => setShowModal(true)}
-        className="px-3 py-1.5 text-xs font-medium text-danger/70 hover:text-danger border border-danger/20 hover:border-danger/40 rounded-lg transition-colors"
+        className="px-3 py-1.5 text-xs font-medium text-danger/70 hover:text-danger border border-danger/20 hover:border-danger/40 rounded-md transition-colors"
       >
         Delete
       </button>

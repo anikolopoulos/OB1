@@ -91,14 +91,14 @@ export function DeleteModal({
           <button
             ref={cancelRef}
             onClick={onCancel}
-            className="px-4 py-2 text-sm font-medium text-text-secondary bg-bg-elevated border border-border rounded-lg hover:bg-bg-hover transition-colors"
+            className="px-4 py-2 text-sm font-medium text-text-secondary bg-bg-elevated border border-border rounded-md hover:bg-bg-hover transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={handleConfirm}
             disabled={confirming}
-            className="px-4 py-2 text-sm font-medium text-white bg-danger/80 hover:bg-danger rounded-lg transition-colors disabled:opacity-50"
+            className="px-4 py-2 text-sm font-medium text-white bg-danger/80 hover:bg-danger rounded-md transition-colors disabled:opacity-50"
           >
             {confirming ? "Deleting..." : "Delete"}
           </button>

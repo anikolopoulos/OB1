@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { Lock, LockOpen } from "lucide-react";
 
 export function RestrictedToggle() {
   const [unlocked, setUnlocked] = useState(false);
@@ -67,7 +68,7 @@ export function RestrictedToggle() {
       {/* Lock/unlock button */}
       <button
         onClick={() => (unlocked ? handleLock() : setShowModal(true))}
-        className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors w-full ${
+        className={`flex items-center gap-2 px-3 py-2 rounded-md text-xs font-medium transition-colors w-full ${
           unlocked
             ? "bg-amber-500/10 text-amber-400 border border-amber-500/20 hover:bg-amber-500/20"
             : "text-text-muted hover:text-text-secondary hover:bg-bg-hover"
@@ -75,15 +76,9 @@ export function RestrictedToggle() {
         title={unlocked ? "Click to hide restricted content" : "Unlock restricted content"}
       >
         {unlocked ? (
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-amber-400">
-            <rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
-            <path d="M5 7V5a3 3 0 016 0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
+          <LockOpen className="w-4 h-4 text-warning" strokeWidth={1.5} />
         ) : (
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-text-muted">
-            <rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
-            <path d="M5 7V5a3 3 0 016 0v2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
+          <Lock className="w-4 h-4 text-text-muted" strokeWidth={1.5} />
         )}
         {unlocked ? "Restricted visible" : "Restricted hidden"}
       </button>
@@ -106,7 +101,7 @@ export function RestrictedToggle() {
               onKeyDown={(e) => e.key === "Enter" && handleUnlock()}
               placeholder="Passphrase"
               autoFocus
-              className="w-full px-4 py-2.5 bg-bg-elevated border border-border rounded-lg text-text-primary placeholder-text-muted focus:outline-none focus:border-purple focus:ring-1 focus:ring-purple/30 transition mb-3"
+              className="w-full px-4 py-2.5 bg-bg-elevated border border-border rounded-md text-text-primary placeholder-text-muted focus:outline-none focus:border-purple focus:ring-1 focus:ring-purple/30 transition mb-3"
             />
 
             {error && <p className="text-danger text-sm mb-3">{error}</p>}
@@ -125,7 +120,7 @@ export function RestrictedToggle() {
               <button
                 onClick={handleUnlock}
                 disabled={loading || !passphrase.trim()}
-                className="px-4 py-2 text-sm bg-purple hover:bg-purple-dim text-white font-medium rounded-lg transition-colors disabled:opacity-50"
+                className="px-4 py-2 text-sm bg-purple hover:bg-purple-dim text-white font-medium rounded-md transition-colors disabled:opacity-50"
               >
                 {loading ? "Verifying..." : "Unlock"}
               </button>

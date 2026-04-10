@@ -42,7 +42,7 @@ export function ConnectionsPanel({
   if (!hasMetadata || (!loading && connections.length === 0)) return null;
 
   return (
-    <div className="bg-bg-surface border border-border rounded-lg p-5">
+    <div className="bg-bg-surface border border-border rounded-xl p-5">
       <h3 className="text-sm font-medium text-text-primary mb-3">
         Connections
       </h3>
