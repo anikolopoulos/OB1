@@ -42,7 +42,7 @@ export function ConnectionsPanel({
   if (!hasMetadata || (!loading && connections.length === 0)) return null;
 
   return (
-    <div className="bg-bg-surface border border-border rounded-lg p-5">
+    <div className="bg-bg-surface border border-border rounded-xl p-5">
       <h3 className="text-sm font-medium text-text-primary mb-3">
         Connections
       </h3>
@@ -54,7 +54,7 @@ export function ConnectionsPanel({
             <Link
               key={c.id}
               href={`/thoughts/${c.id}`}
-              className="block p-3 rounded-lg border border-border hover:border-violet/50 transition-colors"
+              className="block p-3 rounded-md border border-border hover:border-purple/50 transition-colors"
             >
               <div className="flex items-center gap-2 mb-1">
                 <TypeBadge type={c.type} />
@@ -70,7 +70,7 @@ export function ConnectionsPanel({
                   {(c.shared_topics ?? []).map((t) => (
                     <span
                       key={t}
-                      className="px-1.5 py-0.5 rounded bg-violet-surface text-violet text-[10px]"
+                      className="px-1.5 py-0.5 rounded bg-purple-surface text-purple text-[10px]"
                     >
                       {t}
                     </span>

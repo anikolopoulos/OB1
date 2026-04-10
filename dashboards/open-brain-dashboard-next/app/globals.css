@@ -1,25 +1,63 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
 @theme inline {
-  --color-bg-primary: #0a0a0f;
-  --color-bg-surface: #111118;
-  --color-bg-elevated: #1a1a24;
-  --color-bg-hover: #222230;
-  --color-border: #2a2a3a;
-  --color-border-subtle: #1e1e2e;
-  --color-text-primary: #e8e8ef;
-  --color-text-secondary: #9090a8;
-  --color-text-muted: #606078;
-  --color-violet: #8b5cf6;
-  --color-violet-dim: #7c3aed;
-  --color-violet-glow: rgba(139, 92, 246, 0.15);
-  --color-violet-surface: rgba(139, 92, 246, 0.08);
-  --color-success: #34d399;
-  --color-warning: #fbbf24;
+  /* === Light mode (default) === */
+
+  /* Backgrounds */
+  --color-bg-primary: #faf9f5;
+  --color-bg-surface: #ffffff;
+  --color-bg-elevated: #faf9f5;
+  --color-bg-hover: #f0efeb;
+
+  /* Borders */
+  --color-border: #e8e7e9;
+  --color-border-subtle: #f0efeb;
+
+  /* Text */
+  --color-text-primary: #061923;
+  --color-text-secondary: #a3a0a6;
+  --color-text-muted: #c0bec3;
+
+  /* Purple accent (Leadetic #8257a3) */
+  --color-purple: #8257a3;
+  --color-purple-dim: #6d4590;
+  --color-purple-glow: rgba(130, 87, 163, 0.15);
+  --color-purple-surface: rgba(130, 87, 163, 0.08);
+
+  /* Semantic */
+  --color-success: #699595;
+  --color-warning: #fdbf14;
+  --color-danger: #dc2626;
+  --color-info: #2563eb;
+
+  /* Fonts */
+  --font-serif: var(--font-noto-serif), Georgia, serif;
+  --font-sans: var(--font-inter), system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), monospace;
+}
+
+/* === Dark mode overrides === */
+.dark {
+  --color-bg-primary: #061923;
+  --color-bg-surface: #0d2633;
+  --color-bg-elevated: #143040;
+  --color-bg-hover: #1a3a4d;
+
+  --color-border: #1a2f3d;
+  --color-border-subtle: #142430;
+
+  --color-text-primary: #faf9f5;
+  --color-text-secondary: #5a7a8a;
+  --color-text-muted: #3d5a68;
+
+  /* Purple accent — only override glow/surface opacity for dark backgrounds */
+  --color-purple-glow: rgba(130, 87, 163, 0.25);
+  --color-purple-surface: rgba(130, 87, 163, 0.15);
+
+  --color-success: #82b0b0;
   --color-danger: #f87171;
   --color-info: #60a5fa;
-  --font-sans: var(--font-geist-sans), system-ui, sans-serif;
-  --font-mono: var(--font-geist-mono), monospace;
 }
 
 body {
@@ -46,6 +84,6 @@ body {
 
 /* Selection */
 ::selection {
-  background: var(--color-violet-glow);
+  background: var(--color-purple-glow);
   color: var(--color-text-primary);
 }

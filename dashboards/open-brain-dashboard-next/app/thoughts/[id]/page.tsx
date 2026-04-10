@@ -35,13 +35,13 @@ export default async function ThoughtDetailPage({
       return (
         <div className="flex flex-col items-center justify-center min-h-[400px] space-y-4">
           <div className="text-4xl">🔒</div>
-          <h1 className="text-xl font-semibold text-text-primary">Restricted Content</h1>
+          <h1 className="text-xl font-serif font-light text-text-primary">Restricted Content</h1>
           <p className="text-text-secondary text-sm text-center max-w-md">
             This thought is classified as restricted. Unlock restricted content using the lock icon in the sidebar to view it.
           </p>
           <Link
             href="/thoughts"
-            className="px-4 py-2 bg-violet hover:bg-violet-dim text-white text-sm rounded-lg transition-colors"
+            className="px-4 py-2 bg-purple hover:bg-purple-dim text-white text-sm rounded-md transition-colors"
           >
             Back to Thoughts
           </Link>
@@ -119,7 +119,7 @@ export default async function ThoughtDetailPage({
       {(topics.length > 0 ||
         tags.length > 0 ||
         Object.keys(meta).length > 0) && (
-        <div className="bg-bg-surface border border-border rounded-lg p-5">
+        <div className="bg-bg-surface border border-border rounded-xl p-5">
           <h3 className="text-sm font-medium text-text-primary mb-3">
             Metadata
           </h3>
@@ -130,7 +130,7 @@ export default async function ThoughtDetailPage({
                 {topics.map((t) => (
                   <span
                     key={t}
-                    className="px-2 py-0.5 rounded bg-violet-surface text-violet text-xs"
+                    className="px-2 py-0.5 rounded bg-purple-surface text-purple text-xs"
                   >
                     {t}
                   </span>
@@ -176,15 +176,15 @@ export default async function ThoughtDetailPage({
       {/* Reflections */}
       {reflections.length > 0 && (
         <div>
-          <h3 className="text-lg font-medium mb-3">Reflections</h3>
+          <h3 className="text-lg font-serif font-light mb-3">Reflections</h3>
           <div className="space-y-3">
             {reflections.map((r) => (
               <div
                 key={r.id}
-                className="bg-bg-surface border border-border rounded-lg p-4"
+                className="bg-bg-surface border border-border rounded-xl p-4"
               >
                 <div className="flex items-center gap-2 mb-2">
-                  <span className="text-xs text-violet font-medium">
+                  <span className="text-xs text-purple font-medium">
                     {r.reflection_type}
                   </span>
                   <span className="text-xs text-text-muted">

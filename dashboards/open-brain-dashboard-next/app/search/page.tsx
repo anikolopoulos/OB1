@@ -70,7 +70,7 @@ export default function SearchPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold mb-1">Search</h1>
+        <h1 className="text-2xl font-serif font-light tracking-tight mb-1">Search</h1>
         <p className="text-text-secondary text-sm">
           Search across your second brain
         </p>
@@ -80,7 +80,7 @@ export default function SearchPage() {
 
       {loading && (
         <div className="flex items-center gap-2 text-text-muted text-sm">
-          <div className="w-4 h-4 border-2 border-violet/30 border-t-violet rounded-full animate-spin" />
+          <div className="w-4 h-4 border-2 border-purple/30 border-t-purple rounded-full animate-spin" />
           Searching...
         </div>
       )}
@@ -103,12 +103,12 @@ export default function SearchPage() {
               <Link
                 key={r.id}
                 href={`/thoughts/${r.id}`}
-                className="block bg-bg-surface border border-border rounded-lg p-4 hover:border-violet/30 transition-colors"
+                className="block bg-bg-surface border border-border rounded-xl p-4 hover:border-purple/30 transition-colors"
               >
                 <div className="flex items-center gap-3 mb-2">
                   <TypeBadge type={r.type} />
                   {state.mode === "semantic" && r.similarity != null && (
-                    <span className="text-xs text-violet font-mono">
+                    <span className="text-xs text-purple font-mono">
                       {(r.similarity * 100).toFixed(1)}% match
                     </span>
                   )}
@@ -138,7 +138,7 @@ export default function SearchPage() {
                 {state.page > 1 && (
                   <button
                     onClick={() => goToPage(state.page - 1)}
-                    className="px-3 py-1.5 text-sm bg-bg-elevated border border-border rounded-lg text-text-secondary hover:bg-bg-hover transition-colors"
+                    className="px-3 py-1.5 text-sm bg-bg-elevated border border-border rounded-md text-text-secondary hover:bg-bg-hover transition-colors"
                   >
                     Previous
                   </button>
@@ -146,7 +146,7 @@ export default function SearchPage() {
                 {state.page < state.totalPages && (
                   <button
                     onClick={() => goToPage(state.page + 1)}
-                    className="px-3 py-1.5 text-sm bg-bg-elevated border border-border rounded-lg text-text-secondary hover:bg-bg-hover transition-colors"
+                    className="px-3 py-1.5 text-sm bg-bg-elevated border border-border rounded-md text-text-secondary hover:bg-bg-hover transition-colors"
                   >
                     Next
                   </button>

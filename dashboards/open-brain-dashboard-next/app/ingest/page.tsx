@@ -7,8 +7,8 @@ import { formatDate } from "@/lib/format";
 
 const statusColor: Record<string, string> = {
   complete: "text-success",
-  dry_run_complete: "text-violet",
-  executing: "text-violet",
+  dry_run_complete: "text-purple",
+  executing: "text-purple",
   extracting: "text-warning",
   pending: "text-warning",
   failed: "text-danger",
@@ -38,7 +38,7 @@ export default function AddToBrainPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-2xl font-semibold mb-1">Add to Brain</h1>
+        <h1 className="text-2xl font-serif font-light tracking-tight mb-1">Add to Brain</h1>
         <p className="text-text-secondary text-sm">
           Paste a thought, notes, or source text. Open Brain will decide whether
           to save one thought or extract several.
@@ -46,7 +46,7 @@ export default function AddToBrainPage() {
       </div>
 
       {/* Unified input */}
-      <div className="bg-bg-surface border border-border rounded-lg p-5">
+      <div className="bg-bg-surface border border-border rounded-xl p-5">
         <AddToBrain
           rows={6}
           showModeControl={true}
@@ -57,10 +57,10 @@ export default function AddToBrainPage() {
 
       {/* Job history */}
       <div>
-        <h2 className="text-lg font-medium mb-3">Recent Activity</h2>
+        <h2 className="text-lg font-serif font-light mb-3">Recent Activity</h2>
         {loading ? (
           <div className="flex items-center gap-2 text-text-muted text-sm">
-            <div className="w-4 h-4 border-2 border-violet/30 border-t-violet rounded-full animate-spin" />
+            <div className="w-4 h-4 border-2 border-purple/30 border-t-purple rounded-full animate-spin" />
             Loading...
           </div>
         ) : jobs.length === 0 ? (
@@ -73,7 +73,7 @@ export default function AddToBrainPage() {
             {jobs.map((job) => (
               <div
                 key={job.id}
-                className="bg-bg-surface border border-border rounded-lg p-4"
+                className="bg-bg-surface border border-border rounded-xl p-4"
               >
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-3">

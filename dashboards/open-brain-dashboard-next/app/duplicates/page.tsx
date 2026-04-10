@@ -142,9 +142,9 @@ export default function DuplicatesPage() {
   if (loading && pairs.length === 0) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-semibold">Duplicates</h1>
+        <h1 className="text-2xl font-serif font-light tracking-tight">Duplicates</h1>
         <div className="flex items-center gap-2 text-text-muted text-sm">
-          <div className="w-4 h-4 border-2 border-violet/30 border-t-violet rounded-full animate-spin" />
+          <div className="w-4 h-4 border-2 border-purple/30 border-t-purple rounded-full animate-spin" />
           Searching for near-duplicates...
         </div>
       </div>
@@ -155,7 +155,7 @@ export default function DuplicatesPage() {
     <div className="space-y-6">
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-semibold mb-1">Duplicates</h1>
+          <h1 className="text-2xl font-serif font-light tracking-tight mb-1">Duplicates</h1>
           <p className="text-text-secondary text-sm">
             Semantic near-duplicates (similarity &gt; {(threshold * 100).toFixed(0)}%)
             {!loading && ` | ${pairs.length} pairs found`}
@@ -170,7 +170,7 @@ export default function DuplicatesPage() {
               setOffset(0);
               clearSelections();
             }}
-            className="bg-bg-elevated border border-border rounded-lg px-2 py-1.5 text-sm text-text-primary"
+            className="bg-bg-elevated border border-border rounded-md px-2 py-1.5 text-sm text-text-primary"
           >
             <option value={0.95}>95%</option>
             <option value={0.90}>90%</option>
@@ -185,8 +185,8 @@ export default function DuplicatesPage() {
         const deleteCount = Object.values(selections).filter(s => s === "keep_a" || s === "keep_b").length;
         const keepBothCount = Object.values(selections).filter(s => s === "keep_both").length;
         return (
-          <div className="flex items-center gap-3 bg-violet-surface border border-violet/20 rounded-lg px-4 py-3">
-            <span className="text-sm text-violet font-medium">
+          <div className="flex items-center gap-3 bg-purple-surface border border-purple/20 rounded-xl px-4 py-3">
+            <span className="text-sm text-purple font-medium">
               {selectedCount} pair{selectedCount > 1 ? "s" : ""} selected
               {deleteCount > 0 && keepBothCount > 0 && (
                 <span className="text-text-muted font-normal">
@@ -197,7 +197,7 @@ export default function DuplicatesPage() {
             <button
               disabled={batchProcessing}
               onClick={() => setConfirmBatch(true)}
-              className="px-4 py-1.5 text-sm font-medium bg-violet hover:bg-violet-dim text-white rounded-lg transition-colors disabled:opacity-50"
+              className="px-4 py-1.5 text-sm font-medium bg-purple hover:bg-purple-dim text-white rounded-md transition-colors disabled:opacity-50"
             >
               {batchProcessing ? "Processing..." : `Resolve ${selectedCount} pair${selectedCount > 1 ? "s" : ""}`}
             </button>
@@ -229,7 +229,7 @@ export default function DuplicatesPage() {
           return (
             <div
               key={key}
-              className="bg-bg-surface border border-border rounded-lg p-4 space-y-3"
+              className="bg-bg-surface border border-border rounded-xl p-4 space-y-3"
             >
               {/* Header with similarity badge */}
               <div className="flex items-center justify-between">
@@ -238,9 +238,9 @@ export default function DuplicatesPage() {
                 </span>
                 <div className="flex items-center gap-3">
                   <label
-                    className={`flex items-center gap-1.5 cursor-pointer px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+                    className={`flex items-center gap-1.5 cursor-pointer px-3 py-1.5 text-xs font-medium rounded-md border transition-colors ${
                       selections[key] === "keep_both"
-                        ? "text-violet border-violet/30 bg-violet-surface"
+                        ? "text-purple border-purple/30 bg-purple-surface"
                         : "text-text-muted border-border hover:bg-bg-hover"
                     }`}
                   >
@@ -249,7 +249,7 @@ export default function DuplicatesPage() {
                       name={`pair-${key}`}
                       checked={selections[key] === "keep_both"}
                       onChange={() => toggleSelection(key, "keep_both")}
-                      className="accent-violet"
+                      className="accent-purple"
                     />
                     Keep Both
                   </label>
@@ -260,7 +260,7 @@ export default function DuplicatesPage() {
               <div className="grid grid-cols-2 gap-3">
                 {/* Left: Thought A */}
                 <div
-                  className={`bg-bg-elevated rounded-lg p-3 space-y-2 cursor-pointer border-2 transition-colors ${
+                  className={`bg-bg-elevated rounded-xl p-3 space-y-2 cursor-pointer border-2 transition-colors ${
                     selections[key] === "keep_a"
                       ? "border-emerald-500/50 bg-emerald-500/5"
                       : selections[key] === "keep_b"
@@ -282,7 +282,7 @@ export default function DuplicatesPage() {
                       />
                       <Link
                         href={`/thoughts/${pair.thought_id_a}`}
-                        className="text-xs text-text-muted hover:text-violet"
+                        className="text-xs text-text-muted hover:text-purple"
                         onClick={(e) => e.stopPropagation()}
                       >
                         #{pair.thought_id_a}
@@ -315,7 +315,7 @@ export default function DuplicatesPage() {
                           e.stopPropagation();
                           setConfirmDelete({ action: "keep_a", pair });
                         }}
-                        className="px-3 py-1 text-xs font-medium text-emerald-400 border border-emerald-500/20 rounded-lg hover:bg-emerald-500/10 transition-colors disabled:opacity-30"
+                        className="px-3 py-1 text-xs font-medium text-emerald-400 border border-emerald-500/20 rounded-md hover:bg-emerald-500/10 transition-colors disabled:opacity-30"
                       >
                         Keep This
                       </button>
@@ -325,7 +325,7 @@ export default function DuplicatesPage() {
 
                 {/* Right: Thought B */}
                 <div
-                  className={`bg-bg-elevated rounded-lg p-3 space-y-2 cursor-pointer border-2 transition-colors ${
+                  className={`bg-bg-elevated rounded-xl p-3 space-y-2 cursor-pointer border-2 transition-colors ${
                     selections[key] === "keep_b"
                       ? "border-emerald-500/50 bg-emerald-500/5"
                       : selections[key] === "keep_a"
@@ -347,7 +347,7 @@ export default function DuplicatesPage() {
                       />
                       <Link
                         href={`/thoughts/${pair.thought_id_b}`}
-                        className="text-xs text-text-muted hover:text-violet"
+                        className="text-xs text-text-muted hover:text-purple"
                         onClick={(e) => e.stopPropagation()}
                       >
                         #{pair.thought_id_b}
@@ -380,7 +380,7 @@ export default function DuplicatesPage() {
                           e.stopPropagation();
                           setConfirmDelete({ action: "keep_b", pair });
                         }}
-                        className="px-3 py-1 text-xs font-medium text-emerald-400 border border-emerald-500/20 rounded-lg hover:bg-emerald-500/10 transition-colors disabled:opacity-30"
+                        className="px-3 py-1 text-xs font-medium text-emerald-400 border border-emerald-500/20 rounded-md hover:bg-emerald-500/10 transition-colors disabled:opacity-30"
                       >
                         Keep This
                       </button>
@@ -403,14 +403,14 @@ export default function DuplicatesPage() {
             <button
               disabled={offset <= 0}
               onClick={() => setOffset((o) => Math.max(0, o - PER_PAGE))}
-              className="px-3 py-1.5 text-sm bg-bg-elevated border border-border rounded-lg text-text-secondary hover:bg-bg-hover transition-colors disabled:opacity-30"
+              className="px-3 py-1.5 text-sm bg-bg-elevated border border-border rounded-md text-text-secondary hover:bg-bg-hover transition-colors disabled:opacity-30"
             >
               Previous
             </button>
             <button
               disabled={pairs.length < PER_PAGE}
               onClick={() => setOffset((o) => o + PER_PAGE)}
-              className="px-3 py-1.5 text-sm bg-bg-elevated border border-border rounded-lg text-text-secondary hover:bg-bg-hover transition-colors disabled:opacity-30"
+              className="px-3 py-1.5 text-sm bg-bg-elevated border border-border rounded-md text-text-secondary hover:bg-bg-hover transition-colors disabled:opacity-30"
             >
               Next
             </button>
