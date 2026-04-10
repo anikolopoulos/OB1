@@ -63,26 +63,28 @@ export function ConnectionsPanel({
                 </span>
               </div>
               <p className="text-sm text-text-secondary line-clamp-2">
-                {c.preview}
+                {c.preview || (c as unknown as { content?: string }).content || ''}
               </p>
-              <div className="flex flex-wrap gap-1 mt-1.5">
-                {c.shared_topics.map((t) => (
-                  <span
-                    key={t}
-                    className="px-1.5 py-0.5 rounded bg-violet-surface text-violet text-[10px]"
-                  >
-                    {t}
-                  </span>
-                ))}
-                {c.shared_people.map((p) => (
-                  <span
-                    key={p}
-                    className="px-1.5 py-0.5 rounded bg-bg-elevated text-text-secondary text-[10px]"
-                  >
-                    {p}
-                  </span>
-                ))}
-              </div>
+              {((c.shared_topics?.length ?? 0) > 0 || (c.shared_people?.length ?? 0) > 0) && (
+                <div className="flex flex-wrap gap-1 mt-1.5">
+                  {(c.shared_topics ?? []).map((t) => (
+                    <span
+                      key={t}
+                      className="px-1.5 py-0.5 rounded bg-violet-surface text-violet text-[10px]"
+                    >
+                      {t}
+                    </span>
+                  ))}
+                  {(c.shared_people ?? []).map((p) => (
+                    <span
+                      key={p}
+                      className="px-1.5 py-0.5 rounded bg-bg-elevated text-text-secondary text-[10px]"
+                    >
+                      {p}
+                    </span>
+                  ))}
+                </div>
+              )}
             </Link>
           ))}
         </div>
