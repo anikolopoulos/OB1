@@ -4,13 +4,8 @@
  * Open Brain — Gmail Pull Script
  *
  * Fetches emails from Gmail via REST API, cleans them, generates embeddings
- * and metadata, and inserts each as a thought into Supabase with SHA-256
+ * and metadata, and inserts each as a thought into PostgreSQL with SHA-256
  * content fingerprint dedup.
- *
- * Ingestion modes:
- *   Default:              Supabase direct insert (requires SUPABASE_URL,
- *                         SUPABASE_SERVICE_ROLE_KEY, OPENROUTER_API_KEY)
- *   --ingest-endpoint:    Custom endpoint (requires INGEST_URL, INGEST_KEY)
  *
  * Usage:
  *   deno run --allow-net --allow-read --allow-write --allow-env pull-gmail.ts [options]
@@ -21,8 +16,16 @@
  *   --dry-run                       Parse and show emails without ingesting
  *   --limit=N                       Max emails to process (default: 50)
  *   --list-labels                   List all Gmail labels and exit
- *   --ingest-endpoint               Use INGEST_URL/INGEST_KEY instead of Supabase direct
+ *
+ * Environment variables:
+ *   DATABASE_URL      PostgreSQL connection string (required for live mode)
+ *   LITELLM_BASE_URL  LiteLLM base URL (default: http://localhost:4000/v1)
+ *   LITELLM_API_KEY   LiteLLM API key (required for live mode)
+ *   EMBEDDING_MODEL   Embedding model (default: text-embedding-3-small)
+ *   LLM_MODEL         LLM model for metadata extraction (default: gpt-4o-mini)
  */
+
+import pg from "npm:pg";
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -34,16 +37,11 @@ const SYNC_LOG_PATH = `${SCRIPT_DIR}sync-log.json`;
 const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
 const SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"];
 
-// Supabase direct insert (default mode)
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
-const OPENROUTER_API_KEY = Deno.env.get("OPENROUTER_API_KEY") || "";
-
-// Edge Function endpoint (--ingest-endpoint mode)
-const INGEST_URL = Deno.env.get("INGEST_URL") || "";
-const INGEST_KEY = Deno.env.get("INGEST_KEY") || "";
-
-const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
+const DATABASE_URL = Deno.env.get("DATABASE_URL") || "";
+const LITELLM_BASE_URL = (Deno.env.get("LITELLM_BASE_URL") || "http://localhost:4000/v1").replace(/\/$/, "");
+const LITELLM_API_KEY = Deno.env.get("LITELLM_API_KEY") || "";
+const EMBEDDING_MODEL = Deno.env.get("EMBEDDING_MODEL") || "text-embedding-3-small";
+const LLM_MODEL = Deno.env.get("LLM_MODEL") || "gpt-4o-mini";
 
 // ─── Sync Log (deduplication) ────────────────────────────────────────────────
 
@@ -75,6 +73,11 @@ async function sha256(text: string): Promise<string> {
     .join("");
 }
 
+async function contentFingerprint(text: string): Promise<string> {
+  const normalized = text.toLowerCase().trim().replace(/\s+/g, " ");
+  return await sha256(normalized);
+}
+
 // ─── CLI Argument Parsing ────────────────────────────────────────────────────
 
 interface CliArgs {
@@ -83,7 +86,6 @@ interface CliArgs {
   dryRun: boolean;
   limit: number;
   listLabels: boolean;
-  ingestEndpoint: boolean;
 }
 
 function parseArgs(): CliArgs {
@@ -93,7 +95,6 @@ function parseArgs(): CliArgs {
     dryRun: false,
     limit: 50,
     listLabels: false,
-    ingestEndpoint: false,
   };
 
   for (const arg of Deno.args) {
@@ -107,8 +108,6 @@ function parseArgs(): CliArgs {
       args.limit = parseInt(arg.split("=")[1], 10);
     } else if (arg === "--list-labels") {
       args.listLabels = true;
-    } else if (arg === "--ingest-endpoint") {
-      args.ingestEndpoint = true;
     }
   }
 
@@ -580,18 +579,18 @@ function processEmail(msg: GmailMessage): ProcessedEmail | null {
   };
 }
 
-// ─── Embedding & Metadata (Supabase direct mode) ───────────────────────────
+// ─── LiteLLM Helpers ─────────────────────────────────────────────────────────
 
 async function getEmbedding(text: string): Promise<number[]> {
   const truncated = text.slice(0, 8000);
-  const res = await fetch(`${OPENROUTER_BASE}/embeddings`, {
+  const res = await fetch(`${LITELLM_BASE_URL}/embeddings`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+      Authorization: `Bearer ${LITELLM_API_KEY}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "openai/text-embedding-3-small",
+      model: EMBEDDING_MODEL,
       input: truncated,
     }),
   });
@@ -604,14 +603,14 @@ async function getEmbedding(text: string): Promise<number[]> {
 }
 
 async function extractMetadata(text: string): Promise<Record<string, unknown>> {
-  const res = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+  const res = await fetch(`${LITELLM_BASE_URL}/chat/completions`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+      Authorization: `Bearer ${LITELLM_API_KEY}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "openai/gpt-4o-mini",
+      model: LLM_MODEL,
       response_format: { type: "json_object" },
       messages: [
         {
@@ -636,14 +635,7 @@ Only extract what's explicitly there.`,
   }
 }
 
-// ─── Content Fingerprint (normalized, matches upsert_thought RPC) ───────────
-
-async function contentFingerprint(text: string): Promise<string> {
-  const normalized = text.toLowerCase().trim().replace(/\s+/g, " ");
-  return await sha256(normalized);
-}
-
-// ─── Ingestion ───────────────────────────────────────────────────────────────
+// ─── PostgreSQL Ingestion ────────────────────────────────────────────────────
 
 interface IngestResult {
   ok: boolean;
@@ -654,9 +646,17 @@ interface IngestResult {
   duplicate?: boolean;
 }
 
-let fingerprintSupported: boolean | null = null;
+function buildEmailContent(
+  emailBody: string,
+  from: string,
+  subject: string,
+  date: string,
+): string {
+  return `[Email from ${from} | Subject: ${subject} | Date: ${date}]\n\n${emailBody}`;
+}
 
 async function ingestThoughtDirect(
+  pool: pg.Pool,
   content: string,
   source: string,
   extraMetadata?: Record<string, unknown>,
@@ -668,122 +668,35 @@ async function ingestThoughtDirect(
     extractMetadata(content),
   ]);
 
-  const row: Record<string, unknown> = {
-    content,
-    embedding,
-    metadata: { ...metadata, source, ...extraMetadata },
-  };
+  const mergedMetadata = { ...metadata, source, ...extraMetadata };
 
-  if (fingerprintSupported !== false) {
-    row.content_fingerprint = fingerprint;
-  }
-
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/thoughts`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      apikey: SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      Prefer: "return=representation",
-    },
-    body: JSON.stringify(row),
-  });
-
-  // 409 = duplicate fingerprint — content already exists, treat as success
-  if (res.status === 409) {
+  try {
+    const result = await pool.query(
+      `INSERT INTO thoughts (content, embedding, metadata, content_fingerprint)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (content_fingerprint) WHERE content_fingerprint IS NOT NULL
+       DO UPDATE SET metadata = EXCLUDED.metadata || thoughts.metadata, updated_at = now()
+       RETURNING id, (xmax = 0) AS inserted`,
+      [
+        content,
+        JSON.stringify(embedding),
+        JSON.stringify(mergedMetadata),
+        fingerprint,
+      ],
+    );
+    const row = result.rows[0];
     const meta = metadata as Record<string, unknown>;
     return {
       ok: true,
+      id: row.id,
       type: meta.type as string,
       topics: meta.topics as string[],
-      duplicate: true,
+      duplicate: !row.inserted,
     };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: message };
   }
-
-  // If fingerprint column doesn't exist, retry without it
-  if (!res.ok && fingerprintSupported === null) {
-    const body = await res.text();
-    if (body.includes("content_fingerprint")) {
-      fingerprintSupported = false;
-      console.log("   (content_fingerprint column not found — inserting without dedup)");
-      console.log("   Run the SQL from primitives/content-fingerprint-dedup to enable dedup.\n");
-      delete row.content_fingerprint;
-      const retry = await fetch(`${SUPABASE_URL}/rest/v1/thoughts`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: SUPABASE_SERVICE_ROLE_KEY,
-          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-          Prefer: "return=representation",
-        },
-        body: JSON.stringify(row),
-      });
-      if (!retry.ok) {
-        const retryBody = await retry.text();
-        return { ok: false, error: `HTTP ${retry.status}: ${retryBody}` };
-      }
-      const data = await retry.json();
-      const meta = metadata as Record<string, unknown>;
-      return {
-        ok: true,
-        id: Array.isArray(data) ? data[0]?.id : data?.id,
-        type: meta.type as string,
-        topics: meta.topics as string[],
-      };
-    }
-    return { ok: false, error: `HTTP ${res.status}: ${body}` };
-  }
-
-  if (!res.ok) {
-    const body = await res.text();
-    return { ok: false, error: `HTTP ${res.status}: ${body}` };
-  }
-
-  if (fingerprintSupported === null) fingerprintSupported = true;
-
-  const data = await res.json();
-  const meta = metadata as Record<string, unknown>;
-  return {
-    ok: true,
-    id: Array.isArray(data) ? data[0]?.id : data?.id,
-    type: meta.type as string,
-    topics: meta.topics as string[],
-  };
-}
-
-async function ingestThoughtEndpoint(
-  content: string,
-  source: string,
-  extraMetadata?: Record<string, unknown>,
-): Promise<IngestResult> {
-  const fingerprint = await sha256(content);
-
-  const body: Record<string, unknown> = {
-    content,
-    source,
-    content_fingerprint: fingerprint,
-  };
-  if (extraMetadata) body.extra_metadata = extraMetadata;
-
-  const res = await fetch(INGEST_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-ingest-key": INGEST_KEY,
-    },
-    body: JSON.stringify(body),
-  });
-
-  return (await res.json()) as IngestResult;
-}
-
-function buildEmailContent(
-  emailBody: string,
-  from: string,
-  subject: string,
-  date: string,
-): string {
-  return `[Email from ${from} | Subject: ${subject} | Date: ${date}]\n\n${emailBody}`;
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────
@@ -812,43 +725,36 @@ async function main() {
     labelMap.set(l.id, l.name);
   }
 
-  // Determine ingestion mode
-  const useEndpoint = args.ingestEndpoint;
-  const ingestMode = args.dryRun ? "DRY RUN" : useEndpoint ? "Edge Function endpoint" : "Supabase direct insert";
-
   // Normal pull mode
   const query = windowToQuery(args.window);
   console.log(`\nFetching emails...`);
   console.log(`  Labels: ${args.labels.join(", ")}`);
   console.log(`  Window: ${args.window}${query ? ` (${query})` : ""}`);
   console.log(`  Limit:  ${args.limit}`);
-  console.log(`  Mode:   ${ingestMode}`);
+  console.log(`  Mode:   ${args.dryRun ? "DRY RUN" : "PostgreSQL direct insert"}`);
 
   if (!args.dryRun) {
-    if (useEndpoint) {
-      if (!INGEST_URL || !INGEST_KEY) {
-        console.error("\nINGEST_URL and INGEST_KEY are required with --ingest-endpoint.");
-        console.error("Example: export INGEST_URL=https://YOUR_REF.supabase.co/functions/v1/ingest-thought");
-        Deno.exit(1);
-      }
-    } else {
-      if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-        console.error("\nSUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required for live mode.");
-        console.error("Example: export SUPABASE_URL=https://YOUR_REF.supabase.co");
-        Deno.exit(1);
-      }
-      if (!OPENROUTER_API_KEY) {
-        console.error("\nOPENROUTER_API_KEY is required for embedding + metadata extraction.");
-        Deno.exit(1);
-      }
+    if (!DATABASE_URL) {
+      console.error("\nDATABASE_URL is required for live mode.");
+      console.error("Example: export DATABASE_URL=postgresql://ob1:password@localhost:5432/ob1");
+      Deno.exit(1);
+    }
+    if (!LITELLM_API_KEY) {
+      console.error("\nLITELLM_API_KEY is required for embedding + metadata extraction.");
+      Deno.exit(1);
     }
   }
+
+  const pool = args.dryRun ? null : new pg.Pool({ connectionString: DATABASE_URL });
 
   const syncLog = await loadSyncLog();
   const messageRefs = await listMessages(accessToken, args.labels, query, args.limit);
   console.log(`\nFound ${messageRefs.length} messages.\n`);
 
-  if (messageRefs.length === 0) return;
+  if (messageRefs.length === 0) {
+    if (pool) await pool.end();
+    return;
+  }
 
   let processed = 0;
   let skipped = 0;
@@ -857,66 +763,68 @@ async function main() {
   let errors = 0;
   let totalWords = 0;
 
-  for (const ref of messageRefs) {
-    if (syncLog.ingested_ids[ref.id]) {
-      alreadyIngested++;
-      continue;
-    }
+  try {
+    for (const ref of messageRefs) {
+      if (syncLog.ingested_ids[ref.id]) {
+        alreadyIngested++;
+        continue;
+      }
 
-    const msg = await getMessage(accessToken, ref.id);
-    const email = processEmail(msg);
+      const msg = await getMessage(accessToken, ref.id);
+      const email = processEmail(msg);
 
-    if (!email) {
-      skipped++;
-      continue;
-    }
+      if (!email) {
+        skipped++;
+        continue;
+      }
 
-    processed++;
-    totalWords += email.wordCount;
+      processed++;
+      totalWords += email.wordCount;
 
-    const readableLabels = email.labels
-      .map((id) => labelMap.get(id) || id)
-      .filter((name) => !name.startsWith("CATEGORY_"));
+      const readableLabels = email.labels
+        .map((id) => labelMap.get(id) || id)
+        .filter((name) => !name.startsWith("CATEGORY_"));
 
-    console.log(`${processed}. ${email.subject || "(no subject)"}`);
-    console.log(
-      `   From: ${email.from} | ${email.wordCount} words | ${new Date(email.date).toLocaleDateString()}`,
-    );
-    console.log(`   Labels: ${readableLabels.join(", ")}`);
+      console.log(`${processed}. ${email.subject || "(no subject)"}`);
+      console.log(
+        `   From: ${email.from} | ${email.wordCount} words | ${new Date(email.date).toLocaleDateString()}`,
+      );
+      console.log(`   Labels: ${readableLabels.join(", ")}`);
 
-    if (args.dryRun) {
-      console.log(`   "${email.body.slice(0, 120)}..."`);
+      if (args.dryRun) {
+        console.log(`   "${email.body.slice(0, 120)}..."`);
+        console.log();
+        continue;
+      }
+
+      const gmailLabels = email.labels
+        .map((id) => labelMap.get(id) || id)
+        .filter((name) => !name.startsWith("CATEGORY_"));
+
+      const emailMeta: Record<string, unknown> = {
+        gmail_labels: gmailLabels,
+        gmail_id: email.gmailId,
+        gmail_thread_id: email.threadId,
+      };
+
+      const content = buildEmailContent(email.body, email.from, email.subject, email.date);
+      const result = await ingestThoughtDirect(pool!, content, "gmail", emailMeta);
+
+      if (result.ok) {
+        ingested++;
+        syncLog.ingested_ids[ref.id] = new Date().toISOString();
+        const dupTag = result.duplicate ? " (duplicate — skipped)" : "";
+        console.log(`   -> Ingested: ${result.type} — ${(result.topics || []).join(", ")}${dupTag}`);
+      } else {
+        errors++;
+        console.error(`   -> ERROR: ${result.error}`);
+      }
+
       console.log();
-      continue;
+      await new Promise((r) => setTimeout(r, 200));
     }
-
-    const gmailLabels = email.labels
-      .map((id) => labelMap.get(id) || id)
-      .filter((name) => !name.startsWith("CATEGORY_"));
-
-    const emailMeta: Record<string, unknown> = {
-      gmail_labels: gmailLabels,
-      gmail_id: email.gmailId,
-      gmail_thread_id: email.threadId,
-    };
-
-    const content = buildEmailContent(email.body, email.from, email.subject, email.date);
-    const result = useEndpoint
-      ? await ingestThoughtEndpoint(content, "gmail", emailMeta)
-      : await ingestThoughtDirect(content, "gmail", emailMeta);
-
-    if (result.ok) {
-      ingested++;
-      syncLog.ingested_ids[ref.id] = new Date().toISOString();
-      const dupTag = result.duplicate ? " (duplicate — skipped)" : "";
-      console.log(`   -> Ingested: ${result.type} — ${(result.topics || []).join(", ")}${dupTag}`);
-    } else {
-      errors++;
-      console.error(`   -> ERROR: ${result.error}`);
-    }
-
-    console.log();
-    await new Promise((r) => setTimeout(r, 200));
+  } finally {
+    if (pool) await pool.end();
   }
 
   // Save sync log

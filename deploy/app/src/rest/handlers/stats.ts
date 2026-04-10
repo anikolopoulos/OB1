@@ -78,7 +78,7 @@ export async function statsHandler(c: Context): Promise<Response> {
 
   return c.json({
     total_thoughts,
-    window_days: days ?? null,
+    window_days: days ?? 'all',
     types,
     top_topics,
   });

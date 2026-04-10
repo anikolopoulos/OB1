@@ -4,7 +4,7 @@ Open Brain — ChatGPT Export Importer
 
 Extracts conversations from a ChatGPT data export (zip or extracted directory),
 filters trivial ones, summarizes each into 1-3 distilled thoughts via LLM,
-and loads them into your Open Brain instance.
+and loads them into your Open Brain instance via direct PostgreSQL insert.
 
 Supports both single conversations.json and the multi-file format
 (conversations-000.json through conversations-NNN.json) used in large exports.
@@ -13,29 +13,23 @@ Usage:
     python import-chatgpt.py path/to/export.zip [options]
     python import-chatgpt.py path/to/extracted-dir/ [options]
 
-Ingestion modes:
-    Default:              Supabase direct insert (requires SUPABASE_URL,
-                          SUPABASE_SERVICE_ROLE_KEY, OPENROUTER_API_KEY)
-    --ingest-endpoint:    Custom endpoint (requires INGEST_URL, INGEST_KEY)
-
 Options:
     --dry-run              Parse, filter, summarize, but don't ingest
     --after YYYY-MM-DD     Only conversations created after this date
     --before YYYY-MM-DD    Only conversations created before this date
     --limit N              Max conversations to process
-    --model openrouter     LLM backend: openrouter (default) or ollama
+    --model litellm        LLM backend: litellm (default) or ollama
     --ollama-model NAME    Ollama model name (default: qwen3)
     --raw                  Skip summarization, ingest user messages directly
     --verbose              Show full summaries during processing
     --report FILE          Write a markdown report of everything imported
-    --ingest-endpoint      Use INGEST_URL/INGEST_KEY instead of Supabase direct insert
 
 Environment variables:
-    SUPABASE_URL               Supabase project URL (required for default mode)
-    SUPABASE_SERVICE_ROLE_KEY  Supabase service role key (required for default mode)
-    OPENROUTER_API_KEY         OpenRouter API key (required for summarization + embeddings)
-    INGEST_URL                 Custom ingest endpoint URL (required with --ingest-endpoint)
-    INGEST_KEY                 Custom ingest endpoint auth key (required with --ingest-endpoint)
+    DATABASE_URL           PostgreSQL connection string (required for live mode)
+    LITELLM_BASE_URL       LiteLLM base URL (default: http://localhost:4000/v1)
+    LITELLM_API_KEY        LiteLLM API key (required for summarization + embeddings)
+    EMBEDDING_MODEL        Embedding model name (default: text-embedding-3-small)
+    LLM_MODEL              LLM model name (default: gpt-4o-mini)
 """
 
 import argparse
@@ -49,18 +43,34 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-# ─── Configuration ───────────────────────────────────────────────────────────
+# ─── Dependencies ─────────────────────────────────────────────────────────────
+
+try:
+    import requests
+except ImportError:
+    print("Missing dependency: requests")
+    print("Install with: pip install -r requirements.txt")
+    sys.exit(1)
+
+try:
+    import psycopg2
+    import psycopg2.extras
+except ImportError:
+    print("Missing dependency: psycopg2-binary")
+    print("Install with: pip install -r requirements.txt")
+    sys.exit(1)
+
+# ─── Configuration ────────────────────────────────────────────────────────────
 
 SYNC_LOG_PATH = Path("chatgpt-sync-log.json")
 
-OPENROUTER_BASE = "https://openrouter.ai/api/v1"
-OLLAMA_BASE = "http://localhost:11434"
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+LITELLM_BASE_URL = os.environ.get("LITELLM_BASE_URL", "http://localhost:4000/v1").rstrip("/")
+LITELLM_API_KEY = os.environ.get("LITELLM_API_KEY", "")
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
+LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
-INGEST_URL = os.environ.get("INGEST_URL", "")
-INGEST_KEY = os.environ.get("INGEST_KEY", "")
+OLLAMA_BASE = "http://localhost:11434"
 
 # Filtering thresholds
 MIN_TOTAL_MESSAGES = 4
@@ -104,7 +114,18 @@ Return JSON: {"thoughts": ["thought1", "thought2"]}
 If the conversation has nothing worth capturing, return {"thoughts": []}
 Err on the side of returning empty — less is more."""
 
-# ─── Sync Log ────────────────────────────────────────────────────────────────
+# ─── Content Fingerprint ─────────────────────────────────────────────────────
+
+
+def content_fingerprint(text: str) -> str:
+    """SHA-256 fingerprint of normalized content for deduplication."""
+    normalized = text.strip().replace(r"\s+", " ").lower()
+    # Use regex for proper whitespace collapse
+    normalized = re.sub(r"\s+", " ", text.strip()).lower()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+# ─── Sync Log ─────────────────────────────────────────────────────────────────
 
 
 def load_sync_log():
@@ -122,14 +143,7 @@ def save_sync_log(log):
         json.dump(log, f, indent=2)
 
 
-# ─── HTTP Helpers ────────────────────────────────────────────────────────────
-
-try:
-    import requests
-except ImportError:
-    print("Missing dependency: requests")
-    print("Install with: pip install requests")
-    sys.exit(1)
+# ─── HTTP Helpers ─────────────────────────────────────────────────────────────
 
 
 def http_post_with_retry(url, headers, body, retries=2):
@@ -149,7 +163,7 @@ def http_post_with_retry(url, headers, body, retries=2):
     return None  # unreachable
 
 
-# ─── ChatGPT Export Parsing ──────────────────────────────────────────────────
+# ─── ChatGPT Export Parsing ───────────────────────────────────────────────────
 
 
 def extract_conversations(source_path):
@@ -213,7 +227,7 @@ def _load_conversations_from_dir(directory):
 
 
 def conversation_hash(conv):
-    """Generate a stable hash ID for a conversation."""
+    """Generate a stable hash ID for a conversation (used for sync log)."""
     title = conv.get("title", "")
     create_time = str(conv.get("create_time", ""))
     raw = f"{title}|{create_time}"
@@ -293,7 +307,7 @@ def count_messages(messages):
     return count
 
 
-# ─── Conversation Filtering ─────────────────────────────────────────────────
+# ─── Conversation Filtering ───────────────────────────────────────────────────
 
 
 def should_skip(conv, user_text, message_count, sync_log, args):
@@ -334,26 +348,26 @@ def should_skip(conv, user_text, message_count, sync_log, args):
     return None
 
 
-# ─── LLM Summarization ──────────────────────────────────────────────────────
+# ─── LLM Summarization ────────────────────────────────────────────────────────
 
 
-def summarize_openrouter(title, date_str, user_text):
-    """Summarize a conversation into thoughts using OpenRouter."""
-    if not OPENROUTER_API_KEY:
-        print("Error: OPENROUTER_API_KEY environment variable required for summarization.")
+def summarize_litellm(title, date_str, user_text):
+    """Summarize a conversation into thoughts using LiteLLM."""
+    if not LITELLM_API_KEY:
+        print("Error: LITELLM_API_KEY environment variable required for summarization.")
         sys.exit(1)
 
     # Truncate to ~6000 chars to stay within context limits
     truncated = user_text[:6000]
 
     resp = http_post_with_retry(
-        f"{OPENROUTER_BASE}/chat/completions",
+        f"{LITELLM_BASE_URL}/chat/completions",
         headers={
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Authorization": f"Bearer {LITELLM_API_KEY}",
             "Content-Type": "application/json",
         },
         body={
-            "model": "openai/gpt-4o-mini",
+            "model": LLM_MODEL,
             "response_format": {"type": "json_object"},
             "messages": [
                 {"role": "system", "content": SUMMARIZATION_PROMPT},
@@ -424,24 +438,24 @@ def summarize(title, date_str, user_text, args):
     """Dispatch to the appropriate summarization backend."""
     if args.model == "ollama":
         return summarize_ollama(title, date_str, user_text, args.ollama_model)
-    return summarize_openrouter(title, date_str, user_text)
+    return summarize_litellm(title, date_str, user_text)
 
 
-# ─── Embedding Generation ───────────────────────────────────────────────────
+# ─── Embedding Generation ─────────────────────────────────────────────────────
 
 
 def generate_embedding(text):
-    """Generate a 1536-dim embedding via OpenRouter (text-embedding-3-small)."""
+    """Generate a vector embedding via LiteLLM."""
     truncated = text[:8000]
 
     resp = http_post_with_retry(
-        f"{OPENROUTER_BASE}/embeddings",
+        f"{LITELLM_BASE_URL}/embeddings",
         headers={
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Authorization": f"Bearer {LITELLM_API_KEY}",
             "Content-Type": "application/json",
         },
         body={
-            "model": "openai/text-embedding-3-small",
+            "model": EMBEDDING_MODEL,
             "input": truncated,
         },
     )
@@ -459,72 +473,42 @@ def generate_embedding(text):
         return None
 
 
-# ─── Ingestion ───────────────────────────────────────────────────────────────
+# ─── PostgreSQL Ingestion ─────────────────────────────────────────────────────
 
 
-def ingest_thought_supabase(content, metadata_dict):
-    """Insert a thought directly into Supabase with a generated embedding."""
+def ingest_thought(conn, content, metadata_dict):
+    """Insert a thought directly into PostgreSQL with embedding and content fingerprint."""
     embedding = generate_embedding(content)
     if not embedding:
         return {"ok": False, "error": "Failed to generate embedding"}
 
-    resp = http_post_with_retry(
-        f"{SUPABASE_URL}/rest/v1/thoughts",
-        headers={
-            "Content-Type": "application/json",
-            "apikey": SUPABASE_SERVICE_ROLE_KEY,
-            "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-            "Prefer": "return=minimal",
-        },
-        body={
-            "content": content,
-            "embedding": embedding,
-            "metadata": metadata_dict,
-        },
-    )
-
-    if not resp:
-        return {"ok": False, "error": "No response from Supabase"}
-
-    if resp.status_code not in (200, 201):
-        try:
-            error_detail = resp.json()
-        except ValueError:
-            error_detail = resp.text
-        return {"ok": False, "error": f"HTTP {resp.status_code}: {error_detail}"}
-
-    return {"ok": True}
-
-
-def ingest_thought_endpoint(content, extra_metadata, full_text=None):
-    """POST a thought to a custom ingest endpoint."""
-    body = {
-        "content": content,
-        "source": "chatgpt",
-        "extra_metadata": extra_metadata,
-    }
-    if full_text:
-        body["full_text"] = full_text
-
-    resp = http_post_with_retry(
-        INGEST_URL,
-        headers={
-            "Content-Type": "application/json",
-            "x-ingest-key": INGEST_KEY,
-        },
-        body=body,
-    )
-
-    if not resp:
-        return {"ok": False, "error": "No response from server"}
+    fingerprint = content_fingerprint(content)
+    embedding_json = json.dumps(embedding)
+    metadata_json = json.dumps(metadata_dict)
 
     try:
-        return resp.json()
-    except ValueError:
-        return {"ok": False, "error": f"Invalid JSON response: {resp.status_code}"}
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO thoughts (content, embedding, metadata, content_fingerprint)
+                VALUES (%s, %s::vector, %s::jsonb, %s)
+                ON CONFLICT (content_fingerprint) WHERE content_fingerprint IS NOT NULL
+                DO UPDATE SET metadata = EXCLUDED.metadata || thoughts.metadata,
+                              updated_at = now()
+                """,
+                (content, embedding_json, metadata_json, fingerprint),
+            )
+        conn.commit()
+        return {"ok": True}
+    except psycopg2.errors.UniqueViolation:
+        conn.rollback()
+        return {"ok": True, "duplicate": True}
+    except Exception as e:
+        conn.rollback()
+        return {"ok": False, "error": str(e)}
 
 
-# ─── CLI ─────────────────────────────────────────────────────────────────────
+# ─── CLI ──────────────────────────────────────────────────────────────────────
 
 
 def parse_date(s):
@@ -545,24 +529,22 @@ Examples:
   python import-chatgpt.py export.zip --dry-run --limit 10
   python import-chatgpt.py export.zip --after 2024-01-01
   python import-chatgpt.py export.zip --model ollama --ollama-model qwen3
-  python import-chatgpt.py export.zip --raw --limit 50
-  python import-chatgpt.py export.zip --ingest-endpoint""",
+  python import-chatgpt.py export.zip --raw --limit 50""",
     )
     parser.add_argument("zip_path", help="Path to ChatGPT data export zip file or extracted directory")
     parser.add_argument("--dry-run", action="store_true", help="Parse and summarize but don't ingest")
     parser.add_argument("--after", type=parse_date, help="Only conversations after YYYY-MM-DD")
     parser.add_argument("--before", type=parse_date, help="Only conversations before YYYY-MM-DD")
     parser.add_argument("--limit", type=int, default=0, help="Max conversations to process (0 = unlimited)")
-    parser.add_argument("--model", choices=["openrouter", "ollama"], default="openrouter", help="LLM backend (default: openrouter)")
+    parser.add_argument("--model", choices=["litellm", "ollama"], default="litellm", help="LLM backend (default: litellm)")
     parser.add_argument("--ollama-model", default="qwen3", help="Ollama model name (default: qwen3)")
     parser.add_argument("--raw", action="store_true", help="Skip summarization, ingest user messages directly")
     parser.add_argument("--verbose", action="store_true", help="Show full summaries during processing")
     parser.add_argument("--report", type=str, metavar="FILE", help="Write a markdown report of everything imported")
-    parser.add_argument("--ingest-endpoint", action="store_true", help="Use INGEST_URL/INGEST_KEY instead of Supabase direct insert")
     return parser.parse_args()
 
 
-# ─── Main ────────────────────────────────────────────────────────────────────
+# ─── Main ─────────────────────────────────────────────────────────────────────
 
 
 def main():
@@ -574,28 +556,20 @@ def main():
 
     # Validate env vars for live mode
     if not args.dry_run:
-        if args.ingest_endpoint:
-            if not INGEST_URL:
-                print("Error: INGEST_URL environment variable required with --ingest-endpoint.")
-                sys.exit(1)
-            if not INGEST_KEY:
-                print("Error: INGEST_KEY environment variable required with --ingest-endpoint.")
-                sys.exit(1)
-        else:
-            if not SUPABASE_URL:
-                print("Error: SUPABASE_URL environment variable required.")
-                print("Set it to your Supabase project URL (e.g., https://xxxxx.supabase.co)")
-                sys.exit(1)
-            if not SUPABASE_SERVICE_ROLE_KEY:
-                print("Error: SUPABASE_SERVICE_ROLE_KEY environment variable required.")
-                sys.exit(1)
-            if not OPENROUTER_API_KEY:
-                print("Error: OPENROUTER_API_KEY required for embedding generation.")
-                print("Get one at https://openrouter.ai/keys")
-                sys.exit(1)
+        if not DATABASE_URL:
+            print("Error: DATABASE_URL environment variable required.")
+            print("Set it to your PostgreSQL connection string (e.g., postgresql://user:pass@localhost:5432/ob1)")
+            sys.exit(1)
+        if not args.raw and args.model == "litellm" and not LITELLM_API_KEY:
+            print("Error: LITELLM_API_KEY required for embedding generation and summarization.")
+            print("Use --raw to skip summarization, or --model ollama for local inference.")
+            sys.exit(1)
+        if not LITELLM_API_KEY:
+            print("Error: LITELLM_API_KEY required for embedding generation.")
+            sys.exit(1)
 
-    if not args.raw and args.model == "openrouter" and not OPENROUTER_API_KEY:
-        print("Error: OPENROUTER_API_KEY environment variable required for summarization.")
+    if not args.raw and args.model == "litellm" and not LITELLM_API_KEY:
+        print("Error: LITELLM_API_KEY environment variable required for summarization.")
         print("Use --raw to skip summarization, or --model ollama for local inference.")
         sys.exit(1)
 
@@ -610,13 +584,12 @@ def main():
 
     # Display run configuration
     mode = "DRY RUN" if args.dry_run else "LIVE"
-    ingest_mode = "custom endpoint" if args.ingest_endpoint else "Supabase direct insert"
     summarize_mode = "raw (no summarization)" if args.raw else f"{args.model}"
     if args.model == "ollama" and not args.raw:
         summarize_mode += f" ({args.ollama_model})"
     print(f"  Mode:        {mode}")
     if not args.dry_run:
-        print(f"  Ingestion:   {ingest_mode}")
+        print(f"  Ingestion:   PostgreSQL direct insert")
     print(f"  Summarizer:  {summarize_mode}")
     if args.after:
         print(f"  After:       {args.after}")
@@ -638,124 +611,128 @@ def main():
     total_user_words = 0
     report_entries = []
 
-    for conv in conversations:
-        # Respect limit
-        if args.limit and processed >= args.limit:
-            break
+    conn = None
+    if not args.dry_run:
+        try:
+            conn = psycopg2.connect(DATABASE_URL)
+        except psycopg2.OperationalError as e:
+            print(f"Error: Could not connect to PostgreSQL: {e}")
+            sys.exit(1)
 
-        # Parse conversation
-        messages = walk_messages(conv.get("mapping", {}))
-        user_text = extract_user_text(messages)
-        message_count = count_messages(messages)
+    try:
+        for conv in conversations:
+            # Respect limit
+            if args.limit and processed >= args.limit:
+                break
 
-        # Filter
-        skip_reason = should_skip(conv, user_text, message_count, sync_log, args)
-        if skip_reason:
-            if skip_reason == "already_imported":
-                already_imported += 1
+            # Parse conversation
+            messages = walk_messages(conv.get("mapping", {}))
+            user_text = extract_user_text(messages)
+            message_count = count_messages(messages)
+
+            # Filter
+            skip_reason = should_skip(conv, user_text, message_count, sync_log, args)
+            if skip_reason:
+                if skip_reason == "already_imported":
+                    already_imported += 1
+                else:
+                    filtered += 1
+                    filter_reasons[skip_reason] = filter_reasons.get(skip_reason, 0) + 1
+                continue
+
+            processed += 1
+            word_count = len(user_text.split())
+            total_user_words += word_count
+
+            title = conv.get("title", "(untitled)")
+            create_time = conv.get("create_time")
+            date_str = (
+                datetime.fromtimestamp(create_time, tz=timezone.utc).strftime("%Y-%m-%d")
+                if create_time
+                else "unknown"
+            )
+            conv_id = conversation_hash(conv)
+            chatgpt_id = conv.get("id", "")
+
+            print(f"{processed}. {title}")
+            url_display = f"https://chatgpt.com/c/{chatgpt_id}" if chatgpt_id else "no id"
+            print(f"   {message_count} messages | {word_count} user words | {date_str} | {url_display}")
+
+            # Summarize or use raw
+            if args.raw:
+                thoughts = [user_text]
             else:
-                filtered += 1
-                filter_reasons[skip_reason] = filter_reasons.get(skip_reason, 0) + 1
-            continue
+                thoughts = summarize(title, date_str, user_text, args)
 
-        processed += 1
-        word_count = len(user_text.split())
-        total_user_words += word_count
+            thoughts_generated += len(thoughts)
 
-        title = conv.get("title", "(untitled)")
-        create_time = conv.get("create_time")
-        date_str = (
-            datetime.fromtimestamp(create_time, tz=timezone.utc).strftime("%Y-%m-%d")
-            if create_time
-            else "unknown"
-        )
-        conv_id = conversation_hash(conv)
-        chatgpt_id = conv.get("id", "")
+            if not thoughts:
+                print("   -> No thoughts extracted (empty summary)")
+                if not args.dry_run:
+                    sync_log["ingested_ids"][conv_id] = datetime.now(timezone.utc).isoformat()
+                    save_sync_log(sync_log)
+                print()
+                continue
 
-        print(f"{processed}. {title}")
-        url_display = f"https://chatgpt.com/c/{chatgpt_id}" if chatgpt_id else "no id"
-        print(f"   {message_count} messages | {word_count} user words | {date_str} | {url_display}")
+            if args.verbose or args.dry_run:
+                for i, thought in enumerate(thoughts, 1):
+                    preview = thought if len(thought) <= 200 else thought[:200] + "..."
+                    print(f"   Thought {i}: {preview}")
 
-        # Summarize or use raw
-        if args.raw:
-            thoughts = [user_text]
-        else:
-            thoughts = summarize(title, date_str, user_text, args)
+            if args.report:
+                report_entries.append({
+                    "title": title,
+                    "date": date_str,
+                    "messages": message_count,
+                    "user_words": word_count,
+                    "thoughts": thoughts,
+                })
 
-        thoughts_generated += len(thoughts)
+            if args.dry_run:
+                print()
+                continue
 
-        if not thoughts:
-            print("   -> No thoughts extracted (empty summary)")
-            if not args.dry_run:
+            # Build metadata
+            metadata = {
+                "source": "chatgpt",
+                "chatgpt_title": title,
+                "chatgpt_date": date_str,
+                "conversation_id": chatgpt_id,
+            }
+            if chatgpt_id:
+                metadata["conversation_url"] = f"https://chatgpt.com/c/{chatgpt_id}"
+
+            # Ingest thoughts
+            all_ok = True
+            for i, thought in enumerate(thoughts):
+                content = f"[ChatGPT: {title} | {date_str}] {thought}"
+                result = ingest_thought(conn, content, metadata)
+
+                if result.get("ok"):
+                    ingested += 1
+                    dup_tag = " (duplicate — skipped)" if result.get("duplicate") else ""
+                    print(f"   -> Thought {i + 1} ingested{dup_tag}")
+                else:
+                    errors += 1
+                    all_ok = False
+                    print(f"   -> ERROR (thought {i + 1}): {result.get('error', 'unknown')}")
+
+                time.sleep(0.2)  # Rate limit
+
+            # Update sync log on success
+            if all_ok:
                 sync_log["ingested_ids"][conv_id] = datetime.now(timezone.utc).isoformat()
                 save_sync_log(sync_log)
+
             print()
-            continue
 
-        if args.verbose or args.dry_run:
-            for i, thought in enumerate(thoughts, 1):
-                preview = thought if len(thought) <= 200 else thought[:200] + "..."
-                print(f"   Thought {i}: {preview}")
-
-        if args.report:
-            report_entries.append({
-                "title": title,
-                "date": date_str,
-                "messages": message_count,
-                "user_words": word_count,
-                "thoughts": thoughts,
-            })
-
-        if args.dry_run:
-            print()
-            continue
-
-        # Build metadata
-        metadata = {
-            "source": "chatgpt",
-            "chatgpt_title": title,
-            "chatgpt_date": date_str,
-            "conversation_id": chatgpt_id,
-        }
-        if chatgpt_id:
-            metadata["conversation_url"] = f"https://chatgpt.com/c/{chatgpt_id}"
-
-        # Ingest thoughts
-        all_ok = True
-        for i, thought in enumerate(thoughts):
-            content = f"[ChatGPT: {title} | {date_str}] {thought}"
-
-            if args.ingest_endpoint:
-                extra_metadata = {
-                    "chatgpt_title": title,
-                    "chatgpt_create_time": date_str,
-                    "chatgpt_conversation_hash": conv_id,
-                    "source_ref": metadata,
-                }
-                result = ingest_thought_endpoint(content, extra_metadata, full_text=user_text)
-            else:
-                result = ingest_thought_supabase(content, metadata)
-
-            if result.get("ok"):
-                ingested += 1
-                print(f"   -> Thought {i + 1} ingested")
-            else:
-                errors += 1
-                all_ok = False
-                print(f"   -> ERROR (thought {i + 1}): {result.get('error', 'unknown')}")
-
-            time.sleep(0.2)  # Rate limit
-
-        # Update sync log on success
-        if all_ok:
-            sync_log["ingested_ids"][conv_id] = datetime.now(timezone.utc).isoformat()
-            save_sync_log(sync_log)
-
-        print()
+    finally:
+        if conn:
+            conn.close()
 
     # ─── Summary ─────────────────────────────────────────────────────────────
 
-    print("─" * 60)
+    print("-" * 60)
     print("Summary:")
     print(f"  Conversations found:    {total}")
     if already_imported > 0:
@@ -772,7 +749,7 @@ def main():
 
     # Cost estimation
     if not args.raw and processed > 0:
-        # gpt-4o-mini via OpenRouter: ~$0.15/1M input, ~$0.60/1M output
+        # gpt-4o-mini via LiteLLM: ~$0.15/1M input, ~$0.60/1M output
         # Rough estimate: avg 800 tokens input per conv, 200 tokens output
         est_input_tokens = processed * 800
         est_output_tokens = processed * 200
@@ -788,7 +765,7 @@ def main():
         print(f"    Summarization:        ${summarize_cost:.4f}")
     if embedding_cost > 0:
         print(f"    Embeddings:           ${embedding_cost:.4f}")
-    print("─" * 60)
+    print("-" * 60)
 
     if args.report and report_entries:
         _write_report(args.report, report_entries, {
@@ -813,7 +790,7 @@ def _write_report(filepath, entries, stats):
         f.write(f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n\n")
 
         f.write("## Stats\n\n")
-        f.write(f"| Metric | Value |\n|--------|-------|\n")
+        f.write("| Metric | Value |\n|--------|-------|\n")
         f.write(f"| Conversations found | {stats['total']} |\n")
         f.write(f"| Already imported | {stats['already_imported']} |\n")
         f.write(f"| Filtered (trivial) | {stats['filtered']} |\n")

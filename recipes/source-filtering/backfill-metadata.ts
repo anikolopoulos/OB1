@@ -7,11 +7,11 @@
  * and backfills them using the same gpt-4o-mini extraction prompt that
  * capture_thought uses.
  *
- * Typical use: email-imported thoughts that were inserted via Supabase direct
+ * Typical use: email-imported thoughts that were inserted via direct PostgreSQL
  * (skipping the ingest endpoint) have embeddings but no structured metadata.
  *
  * Usage:
- *   deno run --allow-net --allow-env scripts/backfill-metadata.ts [options]
+ *   deno run --allow-net --allow-env backfill-metadata.ts [options]
  *
  * Options:
  *   --source=gmail          Only backfill thoughts from this source (default: all)
@@ -19,19 +19,24 @@
  *   --dry-run               Show what would be updated without writing
  *   --batch-size=10         Concurrent requests per batch (default: 10)
  *
- * Requires: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, OPENROUTER_API_KEY
+ * Environment variables:
+ *   DATABASE_URL      PostgreSQL connection string (required)
+ *   LITELLM_BASE_URL  LiteLLM base URL (default: http://localhost:4000/v1)
+ *   LITELLM_API_KEY   LiteLLM API key (required)
+ *   LLM_MODEL         LLM model name (default: gpt-4o-mini)
  */
 
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-const OPENROUTER_API_KEY = Deno.env.get("OPENROUTER_API_KEY");
+import pg from "npm:pg";
 
-if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !OPENROUTER_API_KEY) {
-  console.error("Missing required env vars: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, OPENROUTER_API_KEY");
+const DATABASE_URL = Deno.env.get("DATABASE_URL");
+const LITELLM_BASE_URL = (Deno.env.get("LITELLM_BASE_URL") || "http://localhost:4000/v1").replace(/\/$/, "");
+const LITELLM_API_KEY = Deno.env.get("LITELLM_API_KEY");
+const LLM_MODEL = Deno.env.get("LLM_MODEL") || "gpt-4o-mini";
+
+if (!DATABASE_URL || !LITELLM_API_KEY) {
+  console.error("Missing required env vars: DATABASE_URL, LITELLM_API_KEY");
   Deno.exit(1);
 }
-
-const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
 
 // ─── Args ────────────────────────────────────────────────────────────────────
 
@@ -65,14 +70,14 @@ const EXTRACT_PROMPT = `Extract metadata from the user's captured thought. Retur
 Only extract what's explicitly there.`;
 
 async function extractMetadata(text: string): Promise<Record<string, unknown>> {
-  const r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+  const r = await fetch(`${LITELLM_BASE_URL}/chat/completions`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+      Authorization: `Bearer ${LITELLM_API_KEY}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "openai/gpt-4o-mini",
+      model: LLM_MODEL,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: EXTRACT_PROMPT },
@@ -83,7 +88,7 @@ async function extractMetadata(text: string): Promise<Record<string, unknown>> {
 
   if (!r.ok) {
     const msg = await r.text().catch(() => "");
-    throw new Error(`OpenRouter failed: ${r.status} ${msg}`);
+    throw new Error(`LiteLLM failed: ${r.status} ${msg}`);
   }
 
   const d = await r.json();
@@ -94,13 +99,7 @@ async function extractMetadata(text: string): Promise<Record<string, unknown>> {
   }
 }
 
-// ─── Supabase helpers ────────────────────────────────────────────────────────
-
-const headers = {
-  "Content-Type": "application/json",
-  "apikey": SUPABASE_SERVICE_ROLE_KEY,
-  "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-};
+// ─── PostgreSQL helpers ──────────────────────────────────────────────────────
 
 interface Thought {
   id: string;
@@ -108,32 +107,45 @@ interface Thought {
   metadata: Record<string, unknown>;
 }
 
-async function fetchThoughtsMissingMetadata(source: string | null, limit: number): Promise<Thought[]> {
+async function fetchThoughtsMissingMetadata(
+  pool: pg.Pool,
+  source: string | null,
+  limit: number,
+): Promise<Thought[]> {
   // Find thoughts where metadata has no 'type' key (the primary indicator of LLM extraction)
-  let url = `${SUPABASE_URL}/rest/v1/thoughts?select=id,content,metadata&order=created_at.desc&limit=${limit}`;
-
-  // metadata->>'type' is null means no LLM extraction was done
-  url += `&metadata->>type=is.null`;
+  let queryText = `
+    SELECT id, content, metadata
+    FROM thoughts
+    WHERE metadata->>'type' IS NULL
+  `;
+  const params: unknown[] = [];
 
   if (source) {
-    url += `&metadata->>source=eq.${source}`;
+    params.push(source);
+    queryText += ` AND metadata->>'source' = $${params.length}`;
   }
 
-  const res = await fetch(url, { headers });
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Failed to fetch thoughts: ${res.status} ${err}`);
-  }
-  return await res.json();
+  queryText += ` ORDER BY created_at DESC LIMIT $${params.length + 1}`;
+  params.push(limit);
+
+  const result = await pool.query(queryText, params);
+  return result.rows;
 }
 
-async function updateThoughtMetadata(id: string, metadata: Record<string, unknown>): Promise<boolean> {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/thoughts?id=eq.${id}`, {
-    method: "PATCH",
-    headers: { ...headers, "Prefer": "return=minimal" },
-    body: JSON.stringify({ metadata }),
-  });
-  return res.ok;
+async function updateThoughtMetadata(
+  pool: pg.Pool,
+  id: string,
+  metadata: Record<string, unknown>,
+): Promise<boolean> {
+  try {
+    await pool.query(
+      `UPDATE thoughts SET metadata = $1::jsonb, updated_at = now() WHERE id = $2`,
+      [JSON.stringify(metadata), id],
+    );
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────
@@ -147,64 +159,73 @@ async function main() {
   console.log(`  Batch size: ${args.batchSize}`);
   console.log(`  Mode: ${args.dryRun ? "DRY RUN" : "LIVE"}\n`);
 
-  const thoughts = await fetchThoughtsMissingMetadata(args.source, args.limit);
-  console.log(`Found ${thoughts.length} thought(s) missing metadata.\n`);
+  const pool = new pg.Pool({ connectionString: DATABASE_URL });
 
-  if (thoughts.length === 0) return;
+  try {
+    const thoughts = await fetchThoughtsMissingMetadata(pool, args.source, args.limit);
+    console.log(`Found ${thoughts.length} thought(s) missing metadata.\n`);
 
-  let updated = 0;
-  let errors = 0;
+    if (thoughts.length === 0) return;
 
-  // Process in batches
-  for (let i = 0; i < thoughts.length; i += args.batchSize) {
-    const batch = thoughts.slice(i, i + args.batchSize);
-    const batchNum = Math.floor(i / args.batchSize) + 1;
-    const totalBatches = Math.ceil(thoughts.length / args.batchSize);
-    console.log(`Batch ${batchNum}/${totalBatches} (${batch.length} thoughts)...`);
+    let updated = 0;
+    let errors = 0;
 
-    const results = await Promise.allSettled(
-      batch.map(async (thought) => {
-        const extracted = await extractMetadata(thought.content);
+    // Process in batches
+    for (let i = 0; i < thoughts.length; i += args.batchSize) {
+      const batch = thoughts.slice(i, i + args.batchSize);
+      const batchNum = Math.floor(i / args.batchSize) + 1;
+      const totalBatches = Math.ceil(thoughts.length / args.batchSize);
+      console.log(`Batch ${batchNum}/${totalBatches} (${batch.length} thoughts)...`);
 
-        if (args.dryRun) {
-          console.log(`  [DRY] ${thought.id}: type=${extracted.type}, topics=${(extracted.topics as string[])?.join(", ")}`);
-          return;
-        }
+      const results = await Promise.allSettled(
+        batch.map(async (thought) => {
+          const extracted = await extractMetadata(thought.content);
 
-        // Merge: keep existing metadata (source, gmail_labels, etc.), add extracted fields
-        const merged = { ...thought.metadata, ...extracted };
-        const ok = await updateThoughtMetadata(thought.id, merged);
+          if (args.dryRun) {
+            console.log(`  [DRY] ${thought.id}: type=${extracted.type}, topics=${(extracted.topics as string[])?.join(", ")}`);
+            return;
+          }
 
-        if (ok) {
-          updated++;
-          console.log(`  ✓ ${thought.id}: type=${extracted.type}, topics=${(extracted.topics as string[])?.join(", ")}`);
-        } else {
+          // Merge: keep existing metadata (source, gmail_labels, etc.), add extracted fields
+          const merged = { ...thought.metadata, ...extracted };
+          const ok = await updateThoughtMetadata(pool, thought.id, merged);
+
+          if (ok) {
+            updated++;
+            console.log(`  + ${thought.id}: type=${extracted.type}, topics=${(extracted.topics as string[])?.join(", ")}`);
+          } else {
+            errors++;
+            console.error(`  x ${thought.id}: update failed`);
+          }
+        }),
+      );
+
+      for (const r of results) {
+        if (r.status === "rejected") {
           errors++;
-          console.error(`  ✗ ${thought.id}: update failed`);
+          console.error(`  x Error: ${r.reason}`);
         }
-      }),
-    );
+      }
 
-    for (const r of results) {
-      if (r.status === "rejected") {
-        errors++;
-        console.error(`  ✗ Error: ${r.reason}`);
+      // Rate limit between batches
+      if (i + args.batchSize < thoughts.length) {
+        await new Promise((r) => setTimeout(r, 500));
       }
     }
 
-    // Rate limit between batches
-    if (i + args.batchSize < thoughts.length) {
-      await new Promise((r) => setTimeout(r, 500));
+    console.log(`\nDone.`);
+    if (!args.dryRun) {
+      console.log(`  Updated: ${updated}`);
+      console.log(`  Errors: ${errors}`);
+    } else {
+      console.log(`  Would update: ${thoughts.length} thoughts`);
     }
-  }
-
-  console.log(`\nDone.`);
-  if (!args.dryRun) {
-    console.log(`  Updated: ${updated}`);
-    console.log(`  Errors: ${errors}`);
-  } else {
-    console.log(`  Would update: ${thoughts.length} thoughts`);
+  } finally {
+    await pool.end();
   }
 }
 
-main();
+main().catch((err) => {
+  console.error("Fatal error:", err);
+  Deno.exit(1);
+});
