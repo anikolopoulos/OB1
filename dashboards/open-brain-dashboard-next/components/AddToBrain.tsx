@@ -41,7 +41,7 @@ const ACTION_COLORS: Record<string, string> = {
   add: "text-success",
   skip: "text-text-muted",
   create_revision: "text-info",
-  append_evidence: "text-violet",
+  append_evidence: "text-purple",
 };
 
 const ACTION_LABELS: Record<string, string> = {
@@ -169,7 +169,7 @@ export function AddToBrain({
           onChange={(e) => setText(e.target.value)}
           rows={rows}
           placeholder="Paste a thought, notes, or source text..."
-          className="w-full bg-bg-elevated border border-border rounded-lg px-4 py-3 text-text-primary placeholder-text-muted focus:outline-none focus:border-violet focus:ring-1 focus:ring-violet/30 transition resize-y"
+          className="w-full bg-bg-elevated border border-border rounded-lg px-4 py-3 text-text-primary placeholder-text-muted focus:outline-none focus:border-purple focus:ring-1 focus:ring-purple/30 transition resize-y"
         />
 
         {/* Advanced mode control */}
@@ -208,7 +208,7 @@ export function AddToBrain({
                       onClick={() => setMode(m.value)}
                       className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${
                         mode === m.value
-                          ? "bg-violet-surface text-violet border-violet/30"
+                          ? "bg-purple-surface text-purple border-purple/30"
                           : "bg-bg-surface text-text-secondary border-border hover:border-text-muted"
                       }`}
                       title={m.description}
@@ -226,7 +226,7 @@ export function AddToBrain({
                       type="checkbox"
                       checked={dryRun}
                       onChange={(e) => setDryRun(e.target.checked)}
-                      className="rounded border-border text-violet focus:ring-violet/30"
+                      className="rounded border-border text-purple focus:ring-purple/30"
                     />
                     Preview before adding (dry run)
                   </label>
@@ -246,7 +246,7 @@ export function AddToBrain({
             <button
               type="submit"
               disabled={submitting || !text.trim()}
-              className="px-5 py-2.5 bg-violet hover:bg-violet-dim text-white font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-5 py-2.5 bg-purple hover:bg-purple-dim text-white font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {submitting ? "Adding..." : "Add to Brain"}
             </button>
@@ -287,7 +287,7 @@ export function AddToBrain({
           {result.path === "extract" && result.job_id && (
             <a
               href="/ingest"
-              className="text-xs text-violet hover:text-violet-dim transition-colors underline underline-offset-2"
+              className="text-xs text-purple hover:text-purple-dim transition-colors underline underline-offset-2"
             >
               View in job history
             </a>
@@ -300,7 +300,7 @@ export function AddToBrain({
       {/* Inline job detail (only when showJobDetail is true and we have data) */}
       {showJobDetail && loadingDetail && (
         <div className="flex items-center gap-2 text-text-muted text-sm">
-          <div className="w-4 h-4 border-2 border-violet/30 border-t-violet rounded-full animate-spin" />
+          <div className="w-4 h-4 border-2 border-purple/30 border-t-purple rounded-full animate-spin" />
           Loading extracted items...
         </div>
       )}
@@ -314,7 +314,7 @@ export function AddToBrain({
             <span
               className={`text-xs font-medium ${
                 jobDetail.job.status === "dry_run_complete"
-                  ? "text-violet"
+                  ? "text-purple"
                   : jobDetail.job.status === "complete"
                     ? "text-success"
                     : "text-text-muted"
@@ -362,7 +362,7 @@ export function AddToBrain({
                 type="button"
                 onClick={handleExecute}
                 disabled={executing}
-                className="px-4 py-2 bg-violet hover:bg-violet-dim text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-4 py-2 bg-purple hover:bg-purple-dim text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {executing ? "Executing..." : "Review & Execute"}
               </button>

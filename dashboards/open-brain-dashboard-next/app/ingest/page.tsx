@@ -7,8 +7,8 @@ import { formatDate } from "@/lib/format";
 
 const statusColor: Record<string, string> = {
   complete: "text-success",
-  dry_run_complete: "text-violet",
-  executing: "text-violet",
+  dry_run_complete: "text-purple",
+  executing: "text-purple",
   extracting: "text-warning",
   pending: "text-warning",
   failed: "text-danger",
@@ -60,7 +60,7 @@ export default function AddToBrainPage() {
         <h2 className="text-lg font-medium mb-3">Recent Activity</h2>
         {loading ? (
           <div className="flex items-center gap-2 text-text-muted text-sm">
-            <div className="w-4 h-4 border-2 border-violet/30 border-t-violet rounded-full animate-spin" />
+            <div className="w-4 h-4 border-2 border-purple/30 border-t-purple rounded-full animate-spin" />
             Loading...
           </div>
         ) : jobs.length === 0 ? (

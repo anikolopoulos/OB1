@@ -104,7 +104,7 @@ export default async function ThoughtsPage({
                 <td className="px-4 py-3">
                   <Link
                     href={`/thoughts/${t.id}`}
-                    className="text-text-primary hover:text-violet transition-colors"
+                    className="text-text-primary hover:text-purple transition-colors"
                   >
                     {t.content.length > 120
                       ? t.content.slice(0, 120) + "..."

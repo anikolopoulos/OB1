@@ -80,7 +80,7 @@ export default function SearchPage() {
 
       {loading && (
         <div className="flex items-center gap-2 text-text-muted text-sm">
-          <div className="w-4 h-4 border-2 border-violet/30 border-t-violet rounded-full animate-spin" />
+          <div className="w-4 h-4 border-2 border-purple/30 border-t-purple rounded-full animate-spin" />
           Searching...
         </div>
       )}
@@ -103,12 +103,12 @@ export default function SearchPage() {
               <Link
                 key={r.id}
                 href={`/thoughts/${r.id}`}
-                className="block bg-bg-surface border border-border rounded-lg p-4 hover:border-violet/30 transition-colors"
+                className="block bg-bg-surface border border-border rounded-lg p-4 hover:border-purple/30 transition-colors"
               >
                 <div className="flex items-center gap-3 mb-2">
                   <TypeBadge type={r.type} />
                   {state.mode === "semantic" && r.similarity != null && (
-                    <span className="text-xs text-violet font-mono">
+                    <span className="text-xs text-purple font-mono">
                       {(r.similarity * 100).toFixed(1)}% match
                     </span>
                   )}

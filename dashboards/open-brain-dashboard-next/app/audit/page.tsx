@@ -73,7 +73,7 @@ export default function AuditPage() {
       <div className="space-y-6">
         <h1 className="text-2xl font-semibold">Audit</h1>
         <div className="flex items-center gap-2 text-text-muted text-sm">
-          <div className="w-4 h-4 border-2 border-violet/30 border-t-violet rounded-full animate-spin" />
+          <div className="w-4 h-4 border-2 border-purple/30 border-t-purple rounded-full animate-spin" />
           Loading low-quality thoughts...
         </div>
       </div>
@@ -117,7 +117,7 @@ export default function AuditPage() {
                       selected.size === data.data.length
                     }
                     onChange={toggleAll}
-                    className="accent-violet"
+                    className="accent-purple"
                   />
                 </th>
                 <th className="text-left px-4 py-3 font-medium">Content</th>
@@ -133,13 +133,13 @@ export default function AuditPage() {
                       type="checkbox"
                       checked={selected.has(t.id)}
                       onChange={() => toggleSelect(t.id)}
-                      className="accent-violet"
+                      className="accent-purple"
                     />
                   </td>
                   <td className="px-4 py-3">
                     <Link
                       href={`/thoughts/${t.id}`}
-                      className="text-text-primary hover:text-violet transition-colors"
+                      className="text-text-primary hover:text-purple transition-colors"
                     >
                       {t.content.length > 100
                         ? t.content.slice(0, 100) + "..."

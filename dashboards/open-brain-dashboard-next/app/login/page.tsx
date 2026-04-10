@@ -48,7 +48,7 @@ export default async function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-bg-primary ml-0">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <div className="w-14 h-14 rounded-xl bg-violet flex items-center justify-center mx-auto mb-4">
+          <div className="w-14 h-14 rounded-xl bg-purple flex items-center justify-center mx-auto mb-4">
             <span className="text-white text-2xl font-bold">OB</span>
           </div>
           <h1 className="text-2xl font-semibold text-text-primary">
