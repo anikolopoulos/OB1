@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
-import { Noto_Serif, Inter } from "next/font/google";
-import { Geist_Mono } from "next/font/google";
+import { Noto_Serif, Inter, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Sidebar } from "@/components/Sidebar";
 import { getSession } from "@/lib/auth";
@@ -27,17 +26,9 @@ export const metadata: Metadata = {
   description: "Second brain dashboard",
 };
 
-// Static dark-mode bootstrap — runs before first paint to prevent flash.
-// This is a hardcoded string literal with no user input (safe, no XSS risk).
-// Same pattern used by next-themes, Tailwind docs, and Vercel templates.
-const themeScript = [
-  "(function(){",
-  "var t=localStorage.getItem('theme');",
-  "if(t==='dark'||(!t&&window.matchMedia('(prefers-color-scheme:dark)').matches)){",
-  "document.documentElement.classList.add('dark')",
-  "}",
-  "})()",
-].join("");
+// Inline script that runs before first paint to prevent dark-mode flash.
+// Hardcoded string literal with no user input — safe, no XSS risk.
+const themeScript = `(function(){var t=localStorage.getItem('theme');if(t==='dark'||(!t&&window.matchMedia('(prefers-color-scheme:dark)').matches)){document.documentElement.classList.add('dark')}})()`;
 
 export default async function RootLayout({
   children,
