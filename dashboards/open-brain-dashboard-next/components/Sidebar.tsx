@@ -13,7 +13,7 @@ const nav = [
   { href: "/ingest", label: "Add", icon: AddIcon },
 ];
 
-export function Sidebar() {
+export function Sidebar({ brainName }: { brainName?: string }) {
   const pathname = usePathname();
 
   // Hide sidebar on login page
@@ -55,6 +55,12 @@ export function Sidebar() {
 
       <div className="px-3 py-3 border-t border-border space-y-2">
         <RestrictedToggle />
+        {brainName && (
+          <div className="px-3 py-1.5">
+            <p className="text-xs text-text-muted">Signed in as</p>
+            <p className="text-sm text-text-primary font-medium truncate">{brainName}</p>
+          </div>
+        )}
         <form action="/api/logout" method="POST">
           <button
             type="submit"

@@ -10,8 +10,10 @@ async function loginAction(formData: FormData) {
     return { error: "API key is required" };
   }
 
-  // Validate key against health endpoint
+  // Validate key against health endpoint and get brain identity
   const apiUrl = process.env.API_URL;
+  let brainName = "";
+  let brainSlug = "";
   try {
     const res = await fetch(`${apiUrl}/health`, {
       headers: { "x-brain-key": apiKey },
@@ -19,6 +21,9 @@ async function loginAction(formData: FormData) {
     if (!res.ok) {
       return { error: "Invalid API key or service unavailable" };
     }
+    const data = await res.json();
+    brainName = data.brain?.display_name ?? "";
+    brainSlug = data.brain?.slug ?? "";
   } catch {
     return { error: "Could not reach API. Check your connection." };
   }
@@ -26,6 +31,8 @@ async function loginAction(formData: FormData) {
   const session = await getSession();
   session.apiKey = apiKey;
   session.loggedIn = true;
+  session.brainName = brainName;
+  session.brainSlug = brainSlug;
   await session.save();
 
   redirect("/");

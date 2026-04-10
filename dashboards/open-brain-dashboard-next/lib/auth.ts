@@ -6,6 +6,8 @@ export interface SessionData {
   apiKey?: string;
   loggedIn?: boolean;
   restrictedUnlocked?: boolean;
+  brainName?: string;
+  brainSlug?: string;
 }
 
 export class AuthError extends Error {

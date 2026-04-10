@@ -3,13 +3,14 @@ import { pool } from '../db/pool.js';
 
 export async function resolveBrain(
   apiKey: string,
-): Promise<{ brainId: string; schemaName: string; slug: string } | null> {
+): Promise<{ brainId: string; schemaName: string; slug: string; displayName: string } | null> {
   const keyHash = createHash('sha256').update(apiKey).digest('hex');
 
   const result = await pool.query(
     `SELECT b.id   AS brain_id,
             b.schema_name,
-            b.slug
+            b.slug,
+            b.display_name
        FROM management.brain_keys k
        JOIN management.brains b ON b.id = k.brain_id
       WHERE k.key_hash = $1
@@ -39,5 +40,6 @@ export async function resolveBrain(
     brainId: row.brain_id,
     schemaName: row.schema_name,
     slug: row.slug,
+    displayName: row.display_name ?? row.slug,
   };
 }
