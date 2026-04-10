@@ -70,7 +70,7 @@ export default function SearchPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold mb-1">Search</h1>
+        <h1 className="text-2xl font-serif font-light tracking-tight mb-1">Search</h1>
         <p className="text-text-secondary text-sm">
           Search across your second brain
         </p>
@@ -103,7 +103,7 @@ export default function SearchPage() {
               <Link
                 key={r.id}
                 href={`/thoughts/${r.id}`}
-                className="block bg-bg-surface border border-border rounded-lg p-4 hover:border-purple/30 transition-colors"
+                className="block bg-bg-surface border border-border rounded-xl p-4 hover:border-purple/30 transition-colors"
               >
                 <div className="flex items-center gap-3 mb-2">
                   <TypeBadge type={r.type} />
@@ -138,7 +138,7 @@ export default function SearchPage() {
                 {state.page > 1 && (
                   <button
                     onClick={() => goToPage(state.page - 1)}
-                    className="px-3 py-1.5 text-sm bg-bg-elevated border border-border rounded-lg text-text-secondary hover:bg-bg-hover transition-colors"
+                    className="px-3 py-1.5 text-sm bg-bg-elevated border border-border rounded-md text-text-secondary hover:bg-bg-hover transition-colors"
                   >
                     Previous
                   </button>
@@ -146,7 +146,7 @@ export default function SearchPage() {
                 {state.page < state.totalPages && (
                   <button
                     onClick={() => goToPage(state.page + 1)}
-                    className="px-3 py-1.5 text-sm bg-bg-elevated border border-border rounded-lg text-text-secondary hover:bg-bg-hover transition-colors"
+                    className="px-3 py-1.5 text-sm bg-bg-elevated border border-border rounded-md text-text-secondary hover:bg-bg-hover transition-colors"
                   >
                     Next
                   </button>

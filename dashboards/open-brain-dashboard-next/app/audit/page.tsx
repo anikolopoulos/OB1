@@ -71,7 +71,7 @@ export default function AuditPage() {
   if (loading && !data) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-semibold">Audit</h1>
+        <h1 className="text-2xl font-serif font-light tracking-tight">Audit</h1>
         <div className="flex items-center gap-2 text-text-muted text-sm">
           <div className="w-4 h-4 border-2 border-purple/30 border-t-purple rounded-full animate-spin" />
           Loading low-quality thoughts...
@@ -86,7 +86,7 @@ export default function AuditPage() {
     <div className="space-y-6">
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-semibold mb-1">Audit</h1>
+          <h1 className="text-2xl font-serif font-light tracking-tight mb-1">Audit</h1>
           <p className="text-text-secondary text-sm">
             Review low quality thoughts (score &lt; 30)
             {data && ` | ${data.total.toLocaleString()} total`}
@@ -95,7 +95,7 @@ export default function AuditPage() {
         {selected.size > 0 && (
           <button
             onClick={() => setShowDelete(true)}
-            className="px-4 py-2 text-sm font-medium text-danger border border-danger/30 rounded-lg hover:bg-danger/10 transition-colors"
+            className="px-4 py-2 text-sm font-medium text-danger border border-danger/30 rounded-md hover:bg-danger/10 transition-colors"
           >
             Delete {selected.size} selected
           </button>
@@ -105,7 +105,7 @@ export default function AuditPage() {
       {error && <p className="text-danger text-sm">{error}</p>}
 
       {data && (
-        <div className="bg-bg-surface border border-border rounded-lg overflow-hidden">
+        <div className="bg-bg-surface border border-border rounded-xl overflow-hidden">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-text-muted text-xs uppercase tracking-wider">
@@ -169,14 +169,14 @@ export default function AuditPage() {
             <button
               disabled={page <= 1}
               onClick={() => setPage((p) => p - 1)}
-              className="px-3 py-1.5 text-sm bg-bg-elevated border border-border rounded-lg text-text-secondary hover:bg-bg-hover transition-colors disabled:opacity-30"
+              className="px-3 py-1.5 text-sm bg-bg-elevated border border-border rounded-md text-text-secondary hover:bg-bg-hover transition-colors disabled:opacity-30"
             >
               Previous
             </button>
             <button
               disabled={page >= totalPages}
               onClick={() => setPage((p) => p + 1)}
-              className="px-3 py-1.5 text-sm bg-bg-elevated border border-border rounded-lg text-text-secondary hover:bg-bg-hover transition-colors disabled:opacity-30"
+              className="px-3 py-1.5 text-sm bg-bg-elevated border border-border rounded-md text-text-secondary hover:bg-bg-hover transition-colors disabled:opacity-30"
             >
               Next
             </button>

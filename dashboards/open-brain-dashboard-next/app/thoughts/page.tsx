@@ -47,7 +47,7 @@ export default async function ThoughtsPage({
   } catch (err) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-semibold">Thoughts</h1>
+        <h1 className="text-2xl font-serif font-light tracking-tight">Thoughts</h1>
         <p className="text-danger text-sm">
           Failed to load thoughts.{" "}
           {err instanceof Error ? err.message : ""}
@@ -70,7 +70,7 @@ export default async function ThoughtsPage({
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold mb-1">Thoughts</h1>
+        <h1 className="text-2xl font-serif font-light tracking-tight mb-1">Thoughts</h1>
         <p className="text-text-secondary text-sm">
           {data.total.toLocaleString()} total thoughts
         </p>
@@ -85,7 +85,7 @@ export default async function ThoughtsPage({
       />
 
       {/* Table */}
-      <div className="bg-bg-surface border border-border rounded-lg overflow-hidden">
+      <div className="bg-bg-surface border border-border rounded-xl overflow-hidden">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border text-text-muted text-xs uppercase tracking-wider">
@@ -134,7 +134,7 @@ export default async function ThoughtsPage({
             {page > 1 && (
               <Link
                 href={pageUrl(page - 1)}
-                className="px-3 py-1.5 text-sm bg-bg-elevated border border-border rounded-lg text-text-secondary hover:bg-bg-hover transition-colors"
+                className="px-3 py-1.5 text-sm bg-bg-elevated border border-border rounded-md text-text-secondary hover:bg-bg-hover transition-colors"
               >
                 Previous
               </Link>
@@ -142,7 +142,7 @@ export default async function ThoughtsPage({
             {page < totalPages && (
               <Link
                 href={pageUrl(page + 1)}
-                className="px-3 py-1.5 text-sm bg-bg-elevated border border-border rounded-lg text-text-secondary hover:bg-bg-hover transition-colors"
+                className="px-3 py-1.5 text-sm bg-bg-elevated border border-border rounded-md text-text-secondary hover:bg-bg-hover transition-colors"
               >
                 Next
               </Link>

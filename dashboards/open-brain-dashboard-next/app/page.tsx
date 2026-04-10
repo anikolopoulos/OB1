@@ -20,7 +20,7 @@ export default async function DashboardPage() {
   } catch (err) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-semibold">Dashboard</h1>
+        <h1 className="text-2xl font-serif font-light tracking-tight">Dashboard</h1>
         <div className="bg-danger/10 border border-danger/30 rounded-lg p-4 text-danger text-sm">
           Failed to load dashboard data. Check API connection.
           <br />
@@ -35,7 +35,7 @@ export default async function DashboardPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-2xl font-semibold mb-1">Dashboard</h1>
+        <h1 className="text-2xl font-serif font-light tracking-tight mb-1">Dashboard</h1>
         <p className="text-text-secondary text-sm">
           Overview of your second brain
         </p>
@@ -45,7 +45,7 @@ export default async function DashboardPage() {
 
       {/* Add to Brain */}
       <div>
-        <h2 className="text-lg font-medium mb-1">Add to Brain</h2>
+        <h2 className="text-lg font-serif font-light mb-1">Add to Brain</h2>
         <p className="text-text-secondary text-sm mb-3">
           Paste a thought, notes, or source text. Open Brain decides whether to
           save one thought or extract several.
@@ -55,7 +55,7 @@ export default async function DashboardPage() {
 
       {/* Recent activity */}
       <div>
-        <h2 className="text-lg font-medium mb-3">Recent Activity</h2>
+        <h2 className="text-lg font-serif font-light mb-3">Recent Activity</h2>
         <div className="space-y-3">
           {recent.data.map((thought) => (
             <ThoughtCard key={thought.id} thought={thought} />

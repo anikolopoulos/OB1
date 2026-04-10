@@ -41,7 +41,7 @@ export default async function ThoughtDetailPage({
           </p>
           <Link
             href="/thoughts"
-            className="px-4 py-2 bg-purple hover:bg-purple-dim text-white text-sm rounded-lg transition-colors"
+            className="px-4 py-2 bg-purple hover:bg-purple-dim text-white text-sm rounded-md transition-colors"
           >
             Back to Thoughts
           </Link>
@@ -119,7 +119,7 @@ export default async function ThoughtDetailPage({
       {(topics.length > 0 ||
         tags.length > 0 ||
         Object.keys(meta).length > 0) && (
-        <div className="bg-bg-surface border border-border rounded-lg p-5">
+        <div className="bg-bg-surface border border-border rounded-xl p-5">
           <h3 className="text-sm font-medium text-text-primary mb-3">
             Metadata
           </h3>
@@ -176,12 +176,12 @@ export default async function ThoughtDetailPage({
       {/* Reflections */}
       {reflections.length > 0 && (
         <div>
-          <h3 className="text-lg font-medium mb-3">Reflections</h3>
+          <h3 className="text-lg font-serif font-light mb-3">Reflections</h3>
           <div className="space-y-3">
             {reflections.map((r) => (
               <div
                 key={r.id}
-                className="bg-bg-surface border border-border rounded-lg p-4"
+                className="bg-bg-surface border border-border rounded-xl p-4"
               >
                 <div className="flex items-center gap-2 mb-2">
                   <span className="text-xs text-purple font-medium">
