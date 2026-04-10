@@ -8,6 +8,16 @@ export function ThemeToggle() {
 
   useEffect(() => {
     setDark(document.documentElement.classList.contains("dark"));
+
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    function onSystemChange(e: MediaQueryListEvent) {
+      if (localStorage.getItem("theme")) return; // user chose manually, ignore OS
+      const next = e.matches;
+      setDark(next);
+      document.documentElement.classList.toggle("dark", next);
+    }
+    mq.addEventListener("change", onSystemChange);
+    return () => mq.removeEventListener("change", onSystemChange);
   }, []);
 
   function toggle() {
