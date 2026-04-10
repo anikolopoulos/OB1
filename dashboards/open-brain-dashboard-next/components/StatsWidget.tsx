@@ -5,7 +5,7 @@ export function StatsWidget({ stats }: { stats: StatsResponse }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
       {/* Total thoughts */}
-      <div className="bg-bg-surface border border-border rounded-lg p-5">
+      <div className="bg-bg-surface border border-border rounded-xl p-5">
         <p className="text-text-muted text-xs font-medium uppercase tracking-wider mb-1">
           Total Thoughts
         </p>
@@ -18,7 +18,7 @@ export function StatsWidget({ stats }: { stats: StatsResponse }) {
       </div>
 
       {/* Type distribution */}
-      <div className="bg-bg-surface border border-border rounded-lg p-5">
+      <div className="bg-bg-surface border border-border rounded-xl p-5">
         <p className="text-text-muted text-xs font-medium uppercase tracking-wider mb-3">
           By Type
         </p>
@@ -35,7 +35,7 @@ export function StatsWidget({ stats }: { stats: StatsResponse }) {
       </div>
 
       {/* Top topics */}
-      <div className="bg-bg-surface border border-border rounded-lg p-5">
+      <div className="bg-bg-surface border border-border rounded-xl p-5">
         <p className="text-text-muted text-xs font-medium uppercase tracking-wider mb-3">
           Top Topics
         </p>
@@ -45,7 +45,7 @@ export function StatsWidget({ stats }: { stats: StatsResponse }) {
               key={t.topic}
               className="flex items-center justify-between text-sm"
             >
-              <span className="text-text-secondary truncate">{t.topic}</span>
+              <span className="text-text-secondary truncate font-light">{t.topic}</span>
               <span className="text-text-muted text-xs ml-2">{t.count}</span>
             </div>
           ))}
