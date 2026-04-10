@@ -169,7 +169,7 @@ export function AddToBrain({
           onChange={(e) => setText(e.target.value)}
           rows={rows}
           placeholder="Paste a thought, notes, or source text..."
-          className="w-full bg-bg-elevated border border-border rounded-lg px-4 py-3 text-text-primary placeholder-text-muted focus:outline-none focus:border-purple focus:ring-1 focus:ring-purple/30 transition resize-y"
+          className="w-full bg-bg-elevated border border-border rounded-md px-4 py-3 text-text-primary placeholder-text-muted focus:outline-none focus:border-purple focus:ring-1 focus:ring-purple/30 transition resize-y"
         />
 
         {/* Advanced mode control */}
@@ -206,7 +206,7 @@ export function AddToBrain({
                       key={m.value}
                       type="button"
                       onClick={() => setMode(m.value)}
-                      className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${
+                      className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${
                         mode === m.value
                           ? "bg-purple-surface text-purple border-purple/30"
                           : "bg-bg-surface text-text-secondary border-border hover:border-text-muted"
@@ -246,7 +246,7 @@ export function AddToBrain({
             <button
               type="submit"
               disabled={submitting || !text.trim()}
-              className="px-5 py-2.5 bg-purple hover:bg-purple-dim text-white font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-5 py-2.5 bg-purple hover:bg-purple-dim text-white font-medium rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {submitting ? "Adding..." : "Add to Brain"}
             </button>
@@ -306,7 +306,7 @@ export function AddToBrain({
       )}
 
       {showJobDetail && jobDetail && (
-        <div className="bg-bg-surface border border-border rounded-lg p-4 space-y-3">
+        <div className="bg-bg-surface border border-border rounded-xl p-4 space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-medium text-text-primary">
               Extracted Items ({jobDetail.items.length})
@@ -362,7 +362,7 @@ export function AddToBrain({
                 type="button"
                 onClick={handleExecute}
                 disabled={executing}
-                className="px-4 py-2 bg-purple hover:bg-purple-dim text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-4 py-2 bg-purple hover:bg-purple-dim text-white text-sm font-medium rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {executing ? "Executing..." : "Review & Execute"}
               </button>
