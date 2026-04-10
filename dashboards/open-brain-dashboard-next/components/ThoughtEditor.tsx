@@ -87,7 +87,7 @@ export function ThoughtEditor({
             defaultValue={String(
               Math.min(Math.max(thought.importance || 3, 1), 5)
             )}
-            className="bg-bg-elevated border border-border rounded-lg px-3 py-2 text-sm text-text-primary w-20 focus:outline-none focus:border-purple"
+            className="bg-bg-elevated border border-border rounded-md px-3 py-2 text-sm text-text-primary w-20 focus:outline-none focus:border-purple"
           >
             {IMPORTANCE_OPTIONS.map((level) => (
               <option key={level} value={level}>

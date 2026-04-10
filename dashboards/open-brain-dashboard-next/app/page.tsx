@@ -21,7 +21,7 @@ export default async function DashboardPage() {
     return (
       <div className="space-y-6">
         <h1 className="text-2xl font-serif font-light tracking-tight">Dashboard</h1>
-        <div className="bg-danger/10 border border-danger/30 rounded-lg p-4 text-danger text-sm">
+        <div className="bg-danger/10 border border-danger/30 rounded-xl p-4 text-danger text-sm">
           Failed to load dashboard data. Check API connection.
           <br />
           <span className="text-text-muted">

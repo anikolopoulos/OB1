@@ -185,7 +185,7 @@ export default function DuplicatesPage() {
         const deleteCount = Object.values(selections).filter(s => s === "keep_a" || s === "keep_b").length;
         const keepBothCount = Object.values(selections).filter(s => s === "keep_both").length;
         return (
-          <div className="flex items-center gap-3 bg-purple-surface border border-purple/20 rounded-lg px-4 py-3">
+          <div className="flex items-center gap-3 bg-purple-surface border border-purple/20 rounded-xl px-4 py-3">
             <span className="text-sm text-purple font-medium">
               {selectedCount} pair{selectedCount > 1 ? "s" : ""} selected
               {deleteCount > 0 && keepBothCount > 0 && (
@@ -260,7 +260,7 @@ export default function DuplicatesPage() {
               <div className="grid grid-cols-2 gap-3">
                 {/* Left: Thought A */}
                 <div
-                  className={`bg-bg-elevated rounded-lg p-3 space-y-2 cursor-pointer border-2 transition-colors ${
+                  className={`bg-bg-elevated rounded-xl p-3 space-y-2 cursor-pointer border-2 transition-colors ${
                     selections[key] === "keep_a"
                       ? "border-emerald-500/50 bg-emerald-500/5"
                       : selections[key] === "keep_b"
@@ -325,7 +325,7 @@ export default function DuplicatesPage() {
 
                 {/* Right: Thought B */}
                 <div
-                  className={`bg-bg-elevated rounded-lg p-3 space-y-2 cursor-pointer border-2 transition-colors ${
+                  className={`bg-bg-elevated rounded-xl p-3 space-y-2 cursor-pointer border-2 transition-colors ${
                     selections[key] === "keep_b"
                       ? "border-emerald-500/50 bg-emerald-500/5"
                       : selections[key] === "keep_a"
