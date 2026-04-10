@@ -15,7 +15,7 @@ export async function GET(
   }
 
   const { id } = await params;
-  const API_URL = process.env.NEXT_PUBLIC_API_URL!;
+  const API_URL = process.env.API_URL!;
   const excludeRestricted =
     request.nextUrl.searchParams.get("exclude_restricted") !== "false";
 

@@ -7,7 +7,7 @@ import type {
   IngestionJob,
 } from "./types";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL!;
+const API_URL = process.env.API_URL!;
 
 export class ApiError extends Error {
   constructor(message: string, public status: number) {

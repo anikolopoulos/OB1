@@ -11,7 +11,7 @@ async function loginAction(formData: FormData) {
   }
 
   // Validate key against health endpoint
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+  const apiUrl = process.env.API_URL;
   try {
     const res = await fetch(`${apiUrl}/health`, {
       headers: { "x-brain-key": apiKey },

@@ -15,7 +15,7 @@ export async function POST(
   }
 
   const { id } = await params;
-  const API_URL = process.env.NEXT_PUBLIC_API_URL!;
+  const API_URL = process.env.API_URL!;
 
   try {
     const res = await fetch(`${API_URL}/ingestion-jobs/${id}/execute`, {
