@@ -8,6 +8,9 @@ import { statsHandler } from './handlers/stats.js';
 import { captureHandler } from './handlers/capture.js';
 import { connectionsHandler } from './handlers/connections.js';
 import { healthHandler } from './handlers/health.js';
+import { listReflections, createReflection } from './handlers/reflections.js';
+import { duplicatesHandler } from './handlers/duplicates.js';
+import { listIngestionJobs, ingestHandler, getIngestionJob, executeIngestionJob } from './handlers/ingestion.js';
 
 export const restRouter = new Hono();
 
@@ -49,3 +52,12 @@ restRouter.get('/stats', statsHandler);
 restRouter.post('/capture', captureHandler);
 restRouter.get('/thought/:id/connections', connectionsHandler);
 restRouter.get('/health', healthHandler);
+
+// ── Phase 2 routes ────────────────────────────────────────────────────────────
+restRouter.get('/thought/:id/reflection', listReflections);
+restRouter.post('/thought/:id/reflection', createReflection);
+restRouter.get('/duplicates', duplicatesHandler);
+restRouter.get('/ingestion-jobs', listIngestionJobs);
+restRouter.post('/ingest', ingestHandler);
+restRouter.get('/ingestion-jobs/:id', getIngestionJob);
+restRouter.post('/ingestion-jobs/:id/execute', executeIngestionJob);
