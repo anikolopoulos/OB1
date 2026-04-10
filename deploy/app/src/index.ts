@@ -5,6 +5,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { config } from './config.js';
 import { resolveBrain } from './auth/brain-resolver.js';
 import { withBrainSchema, type QueryFn } from './db/with-schema.js';
+import { pool } from './db/pool.js';
 import { getEmbedding } from './ai/embeddings.js';
 import { extractMetadata } from './ai/metadata.js';
 import { createMcpServer } from './mcp/server-factory.js';
@@ -122,4 +123,29 @@ server.listen(port, () => {
   if (!config.SLACK_SIGNING_SECRET) {
     console.warn('[startup] SLACK_SIGNING_SECRET not set — Slack webhook will reject all requests');
   }
+
+  // Recover stale ingestion jobs stuck in 'executing' (e.g., from server crash)
+  setInterval(async () => {
+    try {
+      const brains = await pool.query(
+        `SELECT schema_name FROM management.brains WHERE deleted_at IS NULL`,
+      );
+      for (const { schema_name } of brains.rows) {
+        await withBrainSchema(schema_name, async (query) => {
+          const stale = await query(
+            `UPDATE ingestion_jobs
+                SET status = 'failed', updated_at = now()
+              WHERE status = 'executing'
+                AND updated_at < now() - interval '10 minutes'
+              RETURNING id`,
+          );
+          if (stale.rows.length > 0) {
+            console.warn(`[recovery] Reset ${stale.rows.length} stale ingestion job(s) in ${schema_name}`);
+          }
+        });
+      }
+    } catch (err) {
+      console.error('[recovery] Stale job cleanup failed:', err);
+    }
+  }, 5 * 60 * 1000); // Every 5 minutes
 });

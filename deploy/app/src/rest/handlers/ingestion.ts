@@ -193,104 +193,98 @@ export async function getIngestionJob(c: Context): Promise<Response> {
 export async function executeIngestionJob(c: Context): Promise<Response> {
   const id = c.req.param('id');
 
-  // Concurrency guard: only transition from dry_run_complete → executing
-  const lockResult = await brainQuery(
-    c,
-    `UPDATE ingestion_jobs
-        SET status = 'executing', updated_at = now()
-      WHERE id = $1::uuid AND status = 'dry_run_complete'
-      RETURNING id`,
-    [id],
-  );
+  const brain = c.get('brain') as { schemaName: string };
 
-  if (lockResult.rows.length === 0) {
-    return c.json(
-      { error: 'Job not found or not in dry_run_complete state' },
-      409,
+  // Run the entire execute operation on a single connection
+  const jobResult = await withBrainSchema(brain.schemaName, async (query) => {
+    // Concurrency guard: only transition from dry_run_complete → executing
+    const lockResult = await query(
+      `UPDATE ingestion_jobs
+          SET status = 'executing', updated_at = now()
+        WHERE id = $1::uuid AND status = 'dry_run_complete'
+        RETURNING id`,
+      [id],
     );
-  }
 
-  // Fetch pending 'add' items
-  const itemsResult = await brainQuery(
-    c,
-    `SELECT * FROM ingestion_items
-      WHERE job_id = $1::uuid AND action = 'add' AND status = 'pending'
-      ORDER BY created_at ASC`,
-    [id],
-  );
-
-  const items = itemsResult.rows as Array<{
-    id: string;
-    content: string;
-    type: string;
-    fingerprint: string;
-  }>;
-
-  let committedCount = 0;
-  let skippedCount = 0;
-
-  for (const item of items) {
-    try {
-      const [embedding, metadata] = await Promise.all([
-        getEmbedding(item.content),
-        extractMetadata(item.content),
-      ]);
-
-      await brainQuery(
-        c,
-        `SELECT * FROM upsert_thought($1, $2::vector, $3::jsonb)`,
-        [
-          item.content,
-          JSON.stringify(embedding),
-          JSON.stringify({ ...metadata, source: 'ingestion', ingestion_job_id: id }),
-        ],
-      );
-
-      await brainQuery(
-        c,
-        `UPDATE ingestion_items SET status = 'committed' WHERE id = $1::uuid`,
-        [item.id],
-      );
-
-      committedCount++;
-    } catch (err) {
-      console.error(`[ingestion] execute: failed to commit item ${item.id}:`, err);
-
-      await brainQuery(
-        c,
-        `UPDATE ingestion_items SET status = 'skipped' WHERE id = $1::uuid`,
-        [item.id],
-      ).catch(() => {});
-
-      skippedCount++;
+    if (lockResult.rows.length === 0) {
+      return null; // signals 409
     }
+
+    // Fetch pending 'add' items
+    const itemsResult = await query(
+      `SELECT id, content, type, fingerprint FROM ingestion_items
+        WHERE job_id = $1::uuid AND action = 'add' AND status = 'pending'
+        ORDER BY created_at ASC`,
+      [id],
+    );
+
+    const items = itemsResult.rows as Array<{
+      id: string;
+      content: string;
+      type: string;
+      fingerprint: string;
+    }>;
+
+    let committedCount = 0;
+    let skippedCount = 0;
+
+    for (const item of items) {
+      try {
+        // Embedding + metadata calls go to LiteLLM (external, outside DB connection)
+        const [embedding, metadata] = await Promise.all([
+          getEmbedding(item.content),
+          extractMetadata(item.content),
+        ]);
+
+        await query(
+          `SELECT * FROM upsert_thought($1, $2::vector, $3::jsonb)`,
+          [
+            item.content,
+            JSON.stringify(embedding),
+            JSON.stringify({ ...metadata, source: 'ingestion', ingestion_job_id: id }),
+          ],
+        );
+
+        await query(
+          `UPDATE ingestion_items SET status = 'committed' WHERE id = $1::uuid`,
+          [item.id],
+        );
+
+        committedCount++;
+      } catch (err) {
+        console.error(`[ingestion] execute: failed to commit item ${item.id}:`, err);
+        await query(
+          `UPDATE ingestion_items SET status = 'skipped' WHERE id = $1::uuid`,
+          [item.id],
+        ).catch(() => {});
+        skippedCount++;
+      }
+    }
+
+    // Count pre-existing 'skip' action items toward skipped total
+    const skipActionResult = await query(
+      `SELECT count(*)::int AS n FROM ingestion_items WHERE job_id = $1::uuid AND action = 'skip'`,
+      [id],
+    );
+    const actionSkipCount = (skipActionResult.rows[0] as { n: number }).n;
+
+    await query(
+      `UPDATE ingestion_jobs
+          SET status = 'complete',
+              added_count = $2,
+              skipped_count = $3,
+              completed_at = now(),
+              updated_at = now()
+        WHERE id = $1::uuid`,
+      [id, committedCount, skippedCount + actionSkipCount],
+    );
+
+    return await query(`SELECT * FROM ingestion_jobs WHERE id = $1::uuid`, [id]);
+  });
+
+  if (jobResult === null) {
+    return c.json({ error: 'Job not found or not in dry_run_complete state' }, 409);
   }
-
-  // Also count pre-existing 'skip' action items toward skipped total
-  const skipActionResult = await brainQuery(
-    c,
-    `SELECT count(*)::int AS n FROM ingestion_items WHERE job_id = $1::uuid AND action = 'skip'`,
-    [id],
-  );
-  const actionSkipCount = (skipActionResult.rows[0] as { n: number }).n;
-
-  await brainQuery(
-    c,
-    `UPDATE ingestion_jobs
-        SET status = 'complete',
-            added_count = $2,
-            skipped_count = $3,
-            completed_at = now(),
-            updated_at = now()
-      WHERE id = $1::uuid`,
-    [id, committedCount, skippedCount + actionSkipCount],
-  );
-
-  const jobResult = await brainQuery(
-    c,
-    `SELECT * FROM ingestion_jobs WHERE id = $1::uuid`,
-    [id],
-  );
 
   const itemsDetail = await brainQuery(
     c,
