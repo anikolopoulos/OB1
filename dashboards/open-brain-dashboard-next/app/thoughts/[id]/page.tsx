@@ -35,7 +35,7 @@ export default async function ThoughtDetailPage({
       return (
         <div className="flex flex-col items-center justify-center min-h-[400px] space-y-4">
           <div className="text-4xl">🔒</div>
-          <h1 className="text-xl font-semibold text-text-primary">Restricted Content</h1>
+          <h1 className="text-xl font-serif font-light text-text-primary">Restricted Content</h1>
           <p className="text-text-secondary text-sm text-center max-w-md">
             This thought is classified as restricted. Unlock restricted content using the lock icon in the sidebar to view it.
           </p>

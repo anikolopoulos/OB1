@@ -87,7 +87,7 @@ export function RestrictedToggle() {
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="bg-bg-surface border border-border rounded-xl p-6 w-full max-w-sm shadow-xl">
-            <h3 className="text-lg font-semibold text-text-primary mb-1">
+            <h3 className="text-lg font-medium text-text-primary mb-1">
               Unlock Restricted Content
             </h3>
             <p className="text-sm text-text-secondary mb-4">

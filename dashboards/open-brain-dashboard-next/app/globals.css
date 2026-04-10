@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
 @theme inline {
   /* === Light mode (default) === */
@@ -50,13 +51,11 @@
   --color-text-secondary: #5a7a8a;
   --color-text-muted: #3d5a68;
 
-  --color-purple: #8257a3;
-  --color-purple-dim: #6d4590;
+  /* Purple accent — only override glow/surface opacity for dark backgrounds */
   --color-purple-glow: rgba(130, 87, 163, 0.25);
   --color-purple-surface: rgba(130, 87, 163, 0.15);
 
   --color-success: #82b0b0;
-  --color-warning: #fdbf14;
   --color-danger: #f87171;
   --color-info: #60a5fa;
 }

@@ -80,7 +80,7 @@ export function DeleteModal({
       <div className="relative bg-bg-surface border border-border rounded-xl p-6 w-full max-w-md shadow-2xl">
         <h3
           id={titleId}
-          className="text-lg font-semibold text-text-primary mb-2"
+          className="text-lg font-medium text-text-primary mb-2"
         >
           {title}
         </h3>

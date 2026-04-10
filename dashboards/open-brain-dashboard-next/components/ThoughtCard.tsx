@@ -7,7 +7,7 @@ const typeColors: Record<string, string> = {
   task: "bg-blue-500/8 text-blue-600 border-blue-500/20 dark:bg-blue-500/12 dark:text-blue-400 dark:border-blue-500/25",
   person_note: "bg-teal-500/10 text-teal-700 border-teal-500/25 dark:bg-teal-500/15 dark:text-teal-300 dark:border-teal-500/30",
   reference: "bg-gray-500/10 text-gray-600 border-gray-500/25 dark:bg-gray-500/12 dark:text-gray-400 dark:border-gray-500/25",
-  decision: "bg-purple-surface text-purple border-purple/20 dark:bg-purple/15 dark:text-purple-300 dark:border-purple/30",
+  decision: "bg-purple-surface text-purple border-purple/20 dark:bg-purple/15 dark:text-[#b794d4] dark:border-purple/30",
   lesson: "bg-orange-500/10 text-orange-700 border-orange-500/20 dark:bg-orange-500/12 dark:text-orange-400 dark:border-orange-500/25",
   meeting: "bg-teal-500/8 text-teal-600 border-teal-500/15 dark:bg-teal-500/12 dark:text-teal-300 dark:border-teal-500/20",
   journal: "bg-pink-500/10 text-pink-700 border-pink-500/20 dark:bg-pink-500/12 dark:text-pink-400 dark:border-pink-500/25",
