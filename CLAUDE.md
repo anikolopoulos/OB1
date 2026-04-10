@@ -144,7 +144,9 @@ docker compose logs -f postgres   # Database logs
 
 ### Deploy to Hetzner
 
-The live server at `openbrain.leadetic.com` does not have a git clone — only the `deploy/` contents are copied. The deploy process is:
+The live server at `openbrain.leadetic.com` does not have a git clone — only the `deploy/` contents are copied. There are two deployable services:
+
+#### Deploy MCP Server (openbrain)
 
 ```bash
 # 1. Push to GitHub
@@ -156,7 +158,7 @@ rsync -avz --delete deploy/db/ ailab-root:/opt/ai-lab/openbrain/db/
 
 # 3. If SQL schema changed: apply migration manually to existing schemas
 #    (init scripts only run on first boot — existing brains need manual ALTER/CREATE)
-ssh ailab-root "docker exec -i postgres psql -U ailab -d openbrain" < migration.sql
+ssh ailab-root "docker exec -i postgres psql -U openbrain -d openbrain" < migration.sql
 
 # 4. Rebuild and restart
 ssh ailab-root "cd /opt/ai-lab && docker compose build openbrain && docker compose up -d openbrain"
@@ -165,7 +167,34 @@ ssh ailab-root "cd /opt/ai-lab && docker compose build openbrain && docker compo
 ssh ailab-root "curl -s https://openbrain.leadetic.com/health"
 ```
 
-**Important:** The docker-compose service is named `openbrain` (not `app`). Tables are owned by the `ailab` user, not `openbrain` — run DDL migrations as `ailab`.
+**Important:** The docker-compose service is named `openbrain` (not `app`).
+
+#### Deploy Dashboard (ob-dashboard)
+
+The dashboard is a Next.js app at `dashboards/open-brain-dashboard-next/`, deployed as a standalone Docker container behind Traefik at `ob.leadetic.com`.
+
+```bash
+# 1. Push to GitHub
+git push origin main
+
+# 2. Sync dashboard source + Dockerfile to the server
+rsync -avz --delete dashboards/open-brain-dashboard-next/ ailab-root:/opt/ai-lab/openbrain/dashboard/ \
+  --exclude node_modules --exclude .next --exclude .env
+rsync -avz deploy/dashboard/Dockerfile ailab-root:/opt/ai-lab/openbrain/dashboard/Dockerfile
+
+# 3. Rebuild and restart
+ssh ailab-root "cd /opt/ai-lab && docker compose build ob-dashboard && docker compose up -d ob-dashboard"
+
+# 4. Verify
+ssh ailab-root "curl -s https://ob.leadetic.com/api/health"
+```
+
+**Dashboard details:**
+- Docker service: `ob-dashboard` (container port 3001)
+- Domain: `ob.leadetic.com` (Traefik routes via labels)
+- Env vars: `API_URL=http://openbrain:3000/api`, `SESSION_SECRET` from `.env`
+- Build: Multi-stage Dockerfile in `deploy/dashboard/`, uses `output: 'standalone'`
+- The Dockerfile is NOT in the dashboard source directory — it lives in `deploy/dashboard/` and gets copied during deploy
 
 ## Guard Rails
 
