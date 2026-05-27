@@ -11,6 +11,7 @@ import { healthHandler } from './handlers/health.js';
 import { listReflections, createReflection } from './handlers/reflections.js';
 import { duplicatesHandler } from './handlers/duplicates.js';
 import { listIngestionJobs, ingestHandler, getIngestionJob, executeIngestionJob } from './handlers/ingestion.js';
+import { backfillMetadataHandler } from './handlers/backfill-metadata.js';
 
 export const restRouter = new Hono();
 
@@ -61,3 +62,4 @@ restRouter.get('/ingestion-jobs', listIngestionJobs);
 restRouter.post('/ingest', ingestHandler);
 restRouter.get('/ingestion-jobs/:id', getIngestionJob);
 restRouter.post('/ingestion-jobs/:id/execute', executeIngestionJob);
+restRouter.post('/backfill-metadata', backfillMetadataHandler);

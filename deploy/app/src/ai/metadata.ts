@@ -1,14 +1,13 @@
 import { config } from '../config.js';
 import { litellmRequest } from './litellm-client.js';
 
-export const METADATA_SYSTEM_PROMPT = `You are a metadata extraction assistant. Given a thought or note, extract structured metadata as JSON with these fields:
-- people: string[] — names of people mentioned
-- action_items: string[] — any tasks or action items
-- dates_mentioned: string[] — any dates or time references
-- topics: string[] — key topics or themes
-- type: string — one of: "observation", "idea", "task", "meeting_note", "reflection", "reference"
-
-Return ONLY valid JSON, no additional text.`;
+export const METADATA_SYSTEM_PROMPT = `Extract metadata from the user's captured thought. Return JSON with:
+- "people": array of people mentioned (empty if none)
+- "action_items": array of implied to-dos (empty if none)
+- "dates_mentioned": array of dates YYYY-MM-DD (empty if none)
+- "topics": array of 1-3 short topic tags (always at least one)
+- "type": one of "observation", "task", "idea", "reference", "person_note"
+Only extract what's explicitly there.`;
 
 const FALLBACK_METADATA: Record<string, unknown> = {
   topics: ['uncategorized'],

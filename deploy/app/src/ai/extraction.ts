@@ -3,13 +3,23 @@ import { config } from '../config.js';
 import { litellmRequest } from './litellm-client.js';
 import { withBrainSchema } from '../db/with-schema.js';
 
-const EXTRACTION_SYSTEM_PROMPT = `You are a thought extraction assistant for a personal knowledge base. Given a block of text, extract individual atomic thoughts, facts, ideas, or observations.
+const EXTRACTION_SYSTEM_PROMPT = `You are a thought extraction assistant for a personal knowledge base that uses semantic search. Given a block of text, extract individual atomic thoughts, facts, ideas, or observations.
 
 Rules:
-- Each extracted item should be self-contained and understandable on its own
+- Each thought must contain exactly ONE fact, idea, or observation — never two
+- If a sentence contains multiple facts (e.g., "She is British and Canadian. She is deceased."), split them into separate thoughts
+- Ask yourself: "Does this thought answer exactly one question?" If it answers two, split it
+- Each thought should be 1 sentence. Use 2 sentences only if the second is essential context for understanding the first
 - Preserve the original meaning — do not infer or add information
-- Each item should be 1-3 sentences
-- Classify each item: "observation", "idea", "task", "meeting_note", "reflection", "reference", "fact", "decision"
+- Each thought must be self-contained and understandable without the other extracted thoughts
+- Classify each item: "observation", "task", "idea", "reference", "person_note"
+
+Examples of correct splitting:
+  INPUT: "My mother's name is Susan. She is British and Canadian. She is deceased."
+  OUTPUT: 3 thoughts → "My mother's name is Susan." / "My mother is British and Canadian." / "My mother is deceased."
+
+  INPUT: "I'm based in Athens and have Greek and Canadian nationalities."
+  OUTPUT: 2 thoughts → "I am based in Athens." / "I have Greek and Canadian nationalities."
 
 Return ONLY valid JSON: { "thoughts": [{ "content": "...", "type": "..." }] }`;
 
@@ -97,7 +107,7 @@ export async function classifyItems(
     return {
       ...item,
       fingerprint,
-      action: isDuplicate ? 'skip' as const : 'add' as const,
+      action: isDuplicate ? 'skip' : 'add',
       reason: isDuplicate ? 'duplicate content' : null,
       similarity: null,
       matched_thought_id: null,
