@@ -10,3 +10,10 @@ token.json
 gmail-sync-log.json
 sync-log.json
 .superpowers/
+
+# Tooling artifacts
+.playwright-mcp/
+
+# Dev/design verification screenshots (root-level only — committed
+# screenshots belong under docs/ or a dashboards/*/docs/screenshots/ dir)
+/*.png
