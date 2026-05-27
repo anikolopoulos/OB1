@@ -14,6 +14,8 @@ const THOUGHT_SELECT = `
   COALESCE((metadata->>'importance')::int, 5)               AS importance,
   COALESCE((metadata->>'quality_score')::int, 0)            AS quality_score,
   COALESCE(metadata->>'sensitivity_tier', 'standard')       AS sensitivity_tier,
+  metadata->>'status'                                        AS status,
+  (metadata->>'status_updated_at')::timestamptz             AS status_updated_at,
   metadata,
   created_at,
   updated_at
@@ -25,6 +27,7 @@ const listParamsSchema = z.object({
   per_page: z.coerce.number().int().min(1).max(100).default(25),
   type: z.string().optional(),
   source_type: z.string().optional(),
+  status: z.string().optional(),
   importance_min: z.coerce.number().int().optional(),
   quality_score_max: z.coerce.number().int().optional(),
   sort: z.enum(['created_at', 'updated_at', 'importance', 'quality_score']).default('created_at'),
@@ -46,6 +49,7 @@ export async function listThoughts(c: Context): Promise<Response> {
     per_page,
     type,
     source_type,
+    status,
     importance_min,
     quality_score_max,
     sort,
@@ -67,6 +71,15 @@ export async function listThoughts(c: Context): Promise<Response> {
     p++;
     conditions.push(`metadata @> $${p}::jsonb`);
     params.push(JSON.stringify({ source: source_type }));
+  }
+
+  if (status) {
+    const statuses = status.split(',').map((s) => s.trim()).filter(Boolean);
+    if (statuses.length > 0) {
+      p++;
+      conditions.push(`metadata->>'status' = ANY($${p}::text[])`);
+      params.push(statuses);
+    }
   }
 
   if (importance_min !== undefined) {
@@ -169,10 +182,15 @@ const updateBodySchema = z
     content: z.string().min(1).optional(),
     type: z.string().optional(),
     importance: z.number().int().min(1).max(10).optional(),
+    status: z.string().nullable().optional(),
   })
   .refine(
-    (d) => d.content !== undefined || d.type !== undefined || d.importance !== undefined,
-    { message: 'At least one of content, type, or importance must be provided' },
+    (d) =>
+      d.content !== undefined ||
+      d.type !== undefined ||
+      d.importance !== undefined ||
+      d.status !== undefined,
+    { message: 'At least one of content, type, importance, or status must be provided' },
   );
 
 export async function updateThought(c: Context): Promise<Response> {
@@ -190,12 +208,16 @@ export async function updateThought(c: Context): Promise<Response> {
     return c.json({ error: 'Invalid request body', details: parsed.error.flatten() }, 400);
   }
 
-  const { content, type, importance } = parsed.data;
+  const { content, type, importance, status } = parsed.data;
 
   // Start with explicit manual overrides — they must win over AI extraction
   const manualOverrides: Record<string, unknown> = {};
   if (type !== undefined) manualOverrides.type = type;
   if (importance !== undefined) manualOverrides.importance = importance;
+  if (status !== undefined) {
+    manualOverrides.status = status;
+    manualOverrides.status_updated_at = new Date().toISOString();
+  }
 
   // Build the final JSONB patch: AI extraction as base, manual values on top
   let metaPatch: Record<string, unknown> = { ...manualOverrides };
