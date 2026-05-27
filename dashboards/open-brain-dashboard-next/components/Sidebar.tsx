@@ -30,7 +30,7 @@ export function Sidebar({ brainName }: { brainName?: string }) {
   if (pathname === "/login") return null;
 
   return (
-    <aside className="fixed left-0 top-0 h-screen w-56 bg-bg-surface border-r border-border flex flex-col z-40">
+    <aside className="fixed left-0 top-0 h-screen w-56 bg-bg-surface border-r border-border hidden md:flex flex-col z-40">
       <div className="px-5 py-6 border-b border-border">
         <Link href="/" className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-lg bg-purple flex items-center justify-center">

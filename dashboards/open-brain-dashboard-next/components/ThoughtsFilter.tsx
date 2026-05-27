@@ -40,7 +40,7 @@ export function ThoughtsFilter({
   );
 
   return (
-    <div className="flex flex-wrap items-end gap-4 bg-bg-surface border border-border rounded-xl p-4">
+    <div className="flex flex-col md:flex-row md:flex-wrap md:items-end gap-4 bg-bg-surface border border-border rounded-xl p-4">
       <div>
         <label className="block text-xs text-text-muted mb-1">Type</label>
         <select
@@ -72,7 +72,7 @@ export function ThoughtsFilter({
               applyFilters({ source_type: sourceInput });
           }}
           placeholder="e.g. chatgpt_import"
-          className="bg-bg-elevated border border-border rounded-md px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-purple w-44"
+          className="bg-bg-elevated border border-border rounded-md px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-purple w-full md:w-44"
         />
       </div>
 

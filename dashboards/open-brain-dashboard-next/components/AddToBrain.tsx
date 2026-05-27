@@ -63,7 +63,7 @@ export function AddToBrain({
   const [result, setResult] = useState<AddToBrainResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [dryRun, setDryRun] = useState(false);
+  const [dryRun, setDryRun] = useState(true);
 
   // Job detail state (only used when showJobDetail is true)
   const [jobDetail, setJobDetail] = useState<IngestionJobDetail | null>(null);
@@ -97,8 +97,8 @@ export function AddToBrain({
 
     try {
       const body: Record<string, unknown> = { text: text.trim(), mode };
-      if (showJobDetail && dryRun) {
-        body.dry_run = true;
+      if (showJobDetail) {
+        body.dry_run = dryRun;
       }
 
       const res = await fetch("/api/ingest", {

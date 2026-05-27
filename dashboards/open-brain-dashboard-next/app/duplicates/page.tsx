@@ -42,7 +42,14 @@ export default function DuplicatesPage() {
 
   const clearSelections = () => setSelections({});
 
-  const selectedCount = Object.keys(selections).length;
+  const selectionValues = Object.values(selections);
+  const selectedCount = selectionValues.length;
+  const deleteCount = selectionValues.filter(
+    (s) => s === "keep_a" || s === "keep_b"
+  ).length;
+  const keepBothCount = selectionValues.filter(
+    (s) => s === "keep_both"
+  ).length;
 
   const processBatch = async () => {
     setBatchProcessing(true);
@@ -139,6 +146,15 @@ export default function DuplicatesPage() {
   const pairKey = (p: DuplicatePair) =>
     `${p.thought_id_a}-${p.thought_id_b}`;
 
+  /** Returns border/bg classes for a thought panel based on batch selection state. */
+  function panelBorderClass(selection: Selection | undefined, side: "a" | "b"): string {
+    const keepSide = side === "a" ? "keep_a" : "keep_b";
+    const deleteSide = side === "a" ? "keep_b" : "keep_a";
+    if (selection === keepSide) return "border-emerald-500/50 bg-emerald-500/5";
+    if (selection === deleteSide) return "border-red-500/30 bg-red-500/5";
+    return "border-transparent";
+  }
+
   if (loading && pairs.length === 0) {
     return (
       <div className="space-y-6">
@@ -153,7 +169,7 @@ export default function DuplicatesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between">
+      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
         <div>
           <h1 className="text-2xl font-serif font-light tracking-tight mb-1">Duplicates</h1>
           <p className="text-text-secondary text-sm">
@@ -181,36 +197,32 @@ export default function DuplicatesPage() {
       </div>
 
       {/* Batch action toolbar */}
-      {selectedCount > 0 && (() => {
-        const deleteCount = Object.values(selections).filter(s => s === "keep_a" || s === "keep_b").length;
-        const keepBothCount = Object.values(selections).filter(s => s === "keep_both").length;
-        return (
-          <div className="flex items-center gap-3 bg-purple-surface border border-purple/20 rounded-xl px-4 py-3">
-            <span className="text-sm text-purple font-medium">
-              {selectedCount} pair{selectedCount > 1 ? "s" : ""} selected
-              {deleteCount > 0 && keepBothCount > 0 && (
-                <span className="text-text-muted font-normal">
-                  {" "}({deleteCount} to delete, {keepBothCount} to dismiss)
-                </span>
-              )}
-            </span>
-            <button
-              disabled={batchProcessing}
-              onClick={() => setConfirmBatch(true)}
-              className="px-4 py-1.5 text-sm font-medium bg-purple hover:bg-purple-dim text-white rounded-md transition-colors disabled:opacity-50"
-            >
-              {batchProcessing ? "Processing..." : `Resolve ${selectedCount} pair${selectedCount > 1 ? "s" : ""}`}
-            </button>
-            <button
-              disabled={batchProcessing}
-              onClick={clearSelections}
-              className="px-3 py-1.5 text-sm text-text-secondary hover:text-text-primary transition-colors"
-            >
-              Clear
-            </button>
-          </div>
-        );
-      })()}
+      {selectedCount > 0 && (
+        <div className="flex flex-col md:flex-row md:items-center gap-3 bg-purple-surface border border-purple/20 rounded-xl px-4 py-3">
+          <span className="text-sm text-purple font-medium">
+            {selectedCount} pair{selectedCount > 1 ? "s" : ""} selected
+            {deleteCount > 0 && keepBothCount > 0 && (
+              <span className="text-text-muted font-normal">
+                {" "}({deleteCount} to delete, {keepBothCount} to dismiss)
+              </span>
+            )}
+          </span>
+          <button
+            disabled={batchProcessing}
+            onClick={() => setConfirmBatch(true)}
+            className="px-4 py-1.5 min-h-[44px] md:min-h-0 text-sm font-medium bg-purple hover:bg-purple-dim text-white rounded-md transition-colors disabled:opacity-50"
+          >
+            {batchProcessing ? "Processing..." : `Resolve ${selectedCount} pair${selectedCount > 1 ? "s" : ""}`}
+          </button>
+          <button
+            disabled={batchProcessing}
+            onClick={clearSelections}
+            className="px-3 py-1.5 text-sm text-text-secondary hover:text-text-primary transition-colors"
+          >
+            Clear
+          </button>
+        </div>
+      )}
 
       {error && <p className="text-danger text-sm">{error}</p>}
 
@@ -257,16 +269,10 @@ export default function DuplicatesPage() {
               </div>
 
               {/* Side-by-side content */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {/* Left: Thought A */}
                 <div
-                  className={`bg-bg-elevated rounded-xl p-3 space-y-2 cursor-pointer border-2 transition-colors ${
-                    selections[key] === "keep_a"
-                      ? "border-emerald-500/50 bg-emerald-500/5"
-                      : selections[key] === "keep_b"
-                        ? "border-red-500/30 bg-red-500/5"
-                        : "border-transparent"
-                  }`}
+                  className={`bg-bg-elevated rounded-xl p-3 space-y-2 cursor-pointer border-2 transition-colors ${panelBorderClass(selections[key], "a")}`}
                   onClick={() => toggleSelection(key, "keep_a")}
                 >
                   <div className="flex items-center justify-between">
@@ -315,7 +321,7 @@ export default function DuplicatesPage() {
                           e.stopPropagation();
                           setConfirmDelete({ action: "keep_a", pair });
                         }}
-                        className="px-3 py-1 text-xs font-medium text-emerald-400 border border-emerald-500/20 rounded-md hover:bg-emerald-500/10 transition-colors disabled:opacity-30"
+                        className="px-3 py-1 min-h-[44px] md:min-h-0 text-xs font-medium text-emerald-400 border border-emerald-500/20 rounded-md hover:bg-emerald-500/10 transition-colors disabled:opacity-30"
                       >
                         Keep This
                       </button>
@@ -325,13 +331,7 @@ export default function DuplicatesPage() {
 
                 {/* Right: Thought B */}
                 <div
-                  className={`bg-bg-elevated rounded-xl p-3 space-y-2 cursor-pointer border-2 transition-colors ${
-                    selections[key] === "keep_b"
-                      ? "border-emerald-500/50 bg-emerald-500/5"
-                      : selections[key] === "keep_a"
-                        ? "border-red-500/30 bg-red-500/5"
-                        : "border-transparent"
-                  }`}
+                  className={`bg-bg-elevated rounded-xl p-3 space-y-2 cursor-pointer border-2 transition-colors ${panelBorderClass(selections[key], "b")}`}
                   onClick={() => toggleSelection(key, "keep_b")}
                 >
                   <div className="flex items-center justify-between">
@@ -380,7 +380,7 @@ export default function DuplicatesPage() {
                           e.stopPropagation();
                           setConfirmDelete({ action: "keep_b", pair });
                         }}
-                        className="px-3 py-1 text-xs font-medium text-emerald-400 border border-emerald-500/20 rounded-md hover:bg-emerald-500/10 transition-colors disabled:opacity-30"
+                        className="px-3 py-1 min-h-[44px] md:min-h-0 text-xs font-medium text-emerald-400 border border-emerald-500/20 rounded-md hover:bg-emerald-500/10 transition-colors disabled:opacity-30"
                       >
                         Keep This
                       </button>
@@ -403,14 +403,14 @@ export default function DuplicatesPage() {
             <button
               disabled={offset <= 0}
               onClick={() => setOffset((o) => Math.max(0, o - PER_PAGE))}
-              className="px-3 py-1.5 text-sm bg-bg-elevated border border-border rounded-md text-text-secondary hover:bg-bg-hover transition-colors disabled:opacity-30"
+              className="px-3 py-1.5 min-h-[44px] md:min-h-0 flex items-center text-sm bg-bg-elevated border border-border rounded-md text-text-secondary hover:bg-bg-hover transition-colors disabled:opacity-30"
             >
               Previous
             </button>
             <button
               disabled={pairs.length < PER_PAGE}
               onClick={() => setOffset((o) => o + PER_PAGE)}
-              className="px-3 py-1.5 text-sm bg-bg-elevated border border-border rounded-md text-text-secondary hover:bg-bg-hover transition-colors disabled:opacity-30"
+              className="px-3 py-1.5 min-h-[44px] md:min-h-0 flex items-center text-sm bg-bg-elevated border border-border rounded-md text-text-secondary hover:bg-bg-hover transition-colors disabled:opacity-30"
             >
               Next
             </button>
@@ -440,8 +440,6 @@ export default function DuplicatesPage() {
 
       {/* Confirm batch resolve modal */}
       {confirmBatch && (() => {
-        const deleteCount = Object.values(selections).filter(s => s === "keep_a" || s === "keep_b").length;
-        const keepBothCount = Object.values(selections).filter(s => s === "keep_both").length;
         const parts: string[] = [];
         if (deleteCount > 0) parts.push(`delete ${deleteCount} duplicate${deleteCount > 1 ? "s" : ""}`);
         if (keepBothCount > 0) parts.push(`dismiss ${keepBothCount} pair${keepBothCount > 1 ? "s" : ""}`);

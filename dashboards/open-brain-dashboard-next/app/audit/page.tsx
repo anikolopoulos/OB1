@@ -82,9 +82,13 @@ export default function AuditPage() {
 
   const totalPages = data ? Math.ceil(data.total / data.per_page) : 0;
 
+  function truncateContent(text: string, maxLength: number = 100): string {
+    return text.length > maxLength ? text.slice(0, maxLength) + "..." : text;
+  }
+
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between">
+      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
         <div>
           <h1 className="text-2xl font-serif font-light tracking-tight mb-1">Audit</h1>
           <p className="text-text-secondary text-sm">
@@ -95,7 +99,7 @@ export default function AuditPage() {
         {selected.size > 0 && (
           <button
             onClick={() => setShowDelete(true)}
-            className="px-4 py-2 text-sm font-medium text-danger border border-danger/30 rounded-md hover:bg-danger/10 transition-colors"
+            className="px-4 py-2 min-h-[44px] md:min-h-0 text-sm font-medium text-danger border border-danger/30 rounded-md hover:bg-danger/10 transition-colors"
           >
             Delete {selected.size} selected
           </button>
@@ -105,58 +109,125 @@ export default function AuditPage() {
       {error && <p className="text-danger text-sm">{error}</p>}
 
       {data && (
-        <div className="bg-bg-surface border border-border rounded-xl overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-text-muted text-xs uppercase tracking-wider">
-                <th className="px-4 py-3 w-10">
-                  <input
-                    type="checkbox"
-                    checked={
-                      data.data.length > 0 &&
-                      selected.size === data.data.length
-                    }
-                    onChange={toggleAll}
-                    className="accent-purple"
-                  />
-                </th>
-                <th className="text-left px-4 py-3 font-medium">Content</th>
-                <th className="text-left px-4 py-3 font-medium w-24">Type</th>
-                <th className="text-left px-4 py-3 font-medium w-20">Score</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border-subtle">
-              {data.data.map((t: Thought) => (
-                <tr key={t.id} className="hover:bg-bg-hover transition-colors">
-                  <td className="px-4 py-3">
+        <>
+          {/* Desktop Table */}
+          <div className="hidden md:block bg-bg-surface border border-border rounded-xl overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border text-text-muted text-xs uppercase tracking-wider">
+                  <th className="px-4 py-3 w-10">
+                    <input
+                      type="checkbox"
+                      checked={
+                        data.data.length > 0 &&
+                        selected.size === data.data.length
+                      }
+                      onChange={toggleAll}
+                      className="accent-purple"
+                    />
+                  </th>
+                  <th className="text-left px-4 py-3 font-medium">Content</th>
+                  <th className="text-left px-4 py-3 font-medium w-24">Type</th>
+                  <th className="text-left px-4 py-3 font-medium w-20">Score</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border-subtle">
+                {data.data.map((t: Thought) => (
+                  <tr key={t.id} className="hover:bg-bg-hover transition-colors">
+                    <td className="px-4 py-3">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(t.id)}
+                        onChange={() => toggleSelect(t.id)}
+                        className="accent-purple"
+                      />
+                    </td>
+                    <td className="px-4 py-3">
+                      <Link
+                        href={`/thoughts/${t.id}`}
+                        className="text-text-primary hover:text-purple transition-colors"
+                      >
+                        {truncateContent(t.content)}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-3">
+                      <TypeBadge type={t.type} />
+                    </td>
+                    <td className="px-4 py-3 text-warning font-mono text-xs">
+                      {t.quality_score}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Mobile Card Stack */}
+          <div className="md:hidden space-y-3">
+            {/* Select-all row */}
+            <label className="flex items-center gap-3 px-1 py-2 cursor-pointer">
+              <span className="flex items-center justify-center w-11 h-11">
+                <input
+                  type="checkbox"
+                  checked={
+                    data.data.length > 0 &&
+                    selected.size === data.data.length
+                  }
+                  onChange={toggleAll}
+                  className="accent-purple w-5 h-5"
+                />
+              </span>
+              <span className="text-sm text-text-muted">
+                {selected.size === data.data.length && data.data.length > 0
+                  ? "Deselect all"
+                  : "Select all"}
+              </span>
+            </label>
+
+            {data.data.map((t: Thought) => (
+              <div
+                key={t.id}
+                className={`bg-bg-surface border rounded-xl p-4 transition-colors ${
+                  selected.has(t.id)
+                    ? "border-purple/30 bg-purple-surface"
+                    : "border-border"
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  {/* Tap target for checkbox */}
+                  <label className="flex items-center justify-center w-11 h-11 shrink-0 -mt-1 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={selected.has(t.id)}
                       onChange={() => toggleSelect(t.id)}
-                      className="accent-purple"
+                      className="accent-purple w-5 h-5"
                     />
-                  </td>
-                  <td className="px-4 py-3">
+                  </label>
+                  <div className="flex-1 min-w-0">
                     <Link
                       href={`/thoughts/${t.id}`}
-                      className="text-text-primary hover:text-purple transition-colors"
+                      className="block text-sm text-text-primary hover:text-purple transition-colors leading-relaxed mb-2"
                     >
-                      {t.content.length > 100
-                        ? t.content.slice(0, 100) + "..."
-                        : t.content}
+                      {truncateContent(t.content)}
                     </Link>
-                  </td>
-                  <td className="px-4 py-3">
-                    <TypeBadge type={t.type} />
-                  </td>
-                  <td className="px-4 py-3 text-warning font-mono text-xs">
-                    {t.quality_score}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                    <div className="flex items-center gap-3 text-xs text-text-muted">
+                      <TypeBadge type={t.type} />
+                      <span className="text-warning font-mono">
+                        Score: {t.quality_score}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            {data.data.length === 0 && (
+              <p className="text-text-muted text-sm text-center py-8">
+                No low-quality thoughts found.
+              </p>
+            )}
+          </div>
+        </>
       )}
 
       {/* Pagination */}
@@ -169,14 +240,14 @@ export default function AuditPage() {
             <button
               disabled={page <= 1}
               onClick={() => setPage((p) => p - 1)}
-              className="px-3 py-1.5 text-sm bg-bg-elevated border border-border rounded-md text-text-secondary hover:bg-bg-hover transition-colors disabled:opacity-30"
+              className="px-3 py-1.5 min-h-[44px] md:min-h-0 flex items-center text-sm bg-bg-elevated border border-border rounded-md text-text-secondary hover:bg-bg-hover transition-colors disabled:opacity-30"
             >
               Previous
             </button>
             <button
               disabled={page >= totalPages}
               onClick={() => setPage((p) => p + 1)}
-              className="px-3 py-1.5 text-sm bg-bg-elevated border border-border rounded-md text-text-secondary hover:bg-bg-hover transition-colors disabled:opacity-30"
+              className="px-3 py-1.5 min-h-[44px] md:min-h-0 flex items-center text-sm bg-bg-elevated border border-border rounded-md text-text-secondary hover:bg-bg-hover transition-colors disabled:opacity-30"
             >
               Next
             </button>

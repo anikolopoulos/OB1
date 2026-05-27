@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Noto_Serif, Inter, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Sidebar } from "@/components/Sidebar";
+import { BottomNav } from "@/components/BottomNav";
 import { getSession } from "@/lib/auth";
 
 const notoSerif = Noto_Serif({
@@ -49,11 +50,12 @@ export default async function RootLayout({
       </head>
       <body className="min-h-screen flex bg-bg-primary text-text-primary font-sans font-light">
         <Sidebar brainName={brainName} />
-        <main className="flex-1 ml-56 min-h-screen">
-          <div className="max-w-6xl mx-auto px-8 py-8">
+        <main className="flex-1 md:ml-56 min-h-screen">
+          <div className="max-w-6xl mx-auto px-4 md:px-8 py-6 md:py-8 pb-20 md:pb-0">
             {children}
           </div>
         </main>
+        <BottomNav brainName={brainName} />
       </body>
     </html>
   );

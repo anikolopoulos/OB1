@@ -43,8 +43,8 @@ export default async function DashboardPage() {
 
       <StatsWidget stats={stats} />
 
-      {/* Add to Brain */}
-      <div>
+      {/* Add to Brain — hidden on mobile; accessible via Add tab in BottomNav */}
+      <div className="hidden md:block">
         <h2 className="text-lg font-serif font-light mb-1">Add to Brain</h2>
         <p className="text-text-secondary text-sm mb-3">
           Paste a thought, notes, or source text. Open Brain decides whether to

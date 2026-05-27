@@ -138,7 +138,7 @@ export default function SearchPage() {
                 {state.page > 1 && (
                   <button
                     onClick={() => goToPage(state.page - 1)}
-                    className="px-3 py-1.5 text-sm bg-bg-elevated border border-border rounded-md text-text-secondary hover:bg-bg-hover transition-colors"
+                    className="px-3 py-1.5 min-h-[44px] md:min-h-0 flex items-center text-sm bg-bg-elevated border border-border rounded-md text-text-secondary hover:bg-bg-hover transition-colors"
                   >
                     Previous
                   </button>
@@ -146,7 +146,7 @@ export default function SearchPage() {
                 {state.page < state.totalPages && (
                   <button
                     onClick={() => goToPage(state.page + 1)}
-                    className="px-3 py-1.5 text-sm bg-bg-elevated border border-border rounded-md text-text-secondary hover:bg-bg-hover transition-colors"
+                    className="px-3 py-1.5 min-h-[44px] md:min-h-0 flex items-center text-sm bg-bg-elevated border border-border rounded-md text-text-secondary hover:bg-bg-hover transition-colors"
                   >
                     Next
                   </button>

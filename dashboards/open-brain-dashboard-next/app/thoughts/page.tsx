@@ -84,8 +84,8 @@ export default async function ThoughtsPage({
         currentImportance={importance_min}
       />
 
-      {/* Table */}
-      <div className="bg-bg-surface border border-border rounded-xl overflow-hidden">
+      {/* Desktop Table */}
+      <div className="hidden md:block bg-bg-surface border border-border rounded-xl overflow-hidden">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border text-text-muted text-xs uppercase tracking-wider">
@@ -124,6 +124,33 @@ export default async function ThoughtsPage({
         </table>
       </div>
 
+      {/* Mobile Card Stack */}
+      <div className="md:hidden space-y-3">
+        {data.data.map((t) => (
+          <Link
+            key={t.id}
+            href={`/thoughts/${t.id}`}
+            className="block bg-bg-surface border border-border rounded-xl p-4 hover:border-purple/30 transition-colors"
+          >
+            <p className="text-sm text-text-primary leading-relaxed mb-3">
+              {t.content.length > 120
+                ? t.content.slice(0, 120) + "..."
+                : t.content}
+            </p>
+            <div className="flex items-center gap-3 text-xs text-text-muted">
+              <TypeBadge type={t.type} />
+              <span>Imp. {t.importance}</span>
+              <span className="ml-auto">
+                <FormattedDate date={t.created_at} />
+              </span>
+            </div>
+          </Link>
+        ))}
+        {data.data.length === 0 && (
+          <p className="text-text-muted text-sm text-center py-8">No thoughts found.</p>
+        )}
+      </div>
+
       {/* Pagination */}
       {totalPages > 1 && (
         <div className="flex items-center justify-between">
@@ -134,7 +161,7 @@ export default async function ThoughtsPage({
             {page > 1 && (
               <Link
                 href={pageUrl(page - 1)}
-                className="px-3 py-1.5 text-sm bg-bg-elevated border border-border rounded-md text-text-secondary hover:bg-bg-hover transition-colors"
+                className="px-3 py-1.5 min-h-[44px] md:min-h-0 flex items-center text-sm bg-bg-elevated border border-border rounded-md text-text-secondary hover:bg-bg-hover transition-colors"
               >
                 Previous
               </Link>
@@ -142,7 +169,7 @@ export default async function ThoughtsPage({
             {page < totalPages && (
               <Link
                 href={pageUrl(page + 1)}
-                className="px-3 py-1.5 text-sm bg-bg-elevated border border-border rounded-md text-text-secondary hover:bg-bg-hover transition-colors"
+                className="px-3 py-1.5 min-h-[44px] md:min-h-0 flex items-center text-sm bg-bg-elevated border border-border rounded-md text-text-secondary hover:bg-bg-hover transition-colors"
               >
                 Next
               </Link>

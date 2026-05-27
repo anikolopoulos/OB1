@@ -32,16 +32,16 @@ export function SearchBar({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder={placeholder}
-          className="flex-1 px-4 py-2.5 bg-bg-surface border border-border rounded-md text-text-primary placeholder-text-muted focus:outline-none focus:border-purple focus:ring-1 focus:ring-purple/30 transition"
+          className="flex-1 px-4 py-2.5 min-h-[44px] bg-bg-surface border border-border rounded-md text-text-primary placeholder-text-muted focus:outline-none focus:border-purple focus:ring-1 focus:ring-purple/30 transition"
         />
         <button
           type="submit"
-          className="px-5 py-2.5 bg-purple hover:bg-purple-dim text-white font-medium rounded-md transition-colors"
+          className="px-5 py-2.5 min-h-[44px] bg-purple hover:bg-purple-dim text-white font-medium rounded-md transition-colors"
         >
           Search
         </button>
       </div>
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
         <div className="flex items-center gap-4">
           <label className="flex items-center gap-2 cursor-pointer">
             <input

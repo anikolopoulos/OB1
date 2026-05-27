@@ -70,14 +70,16 @@ export function DeleteModal({
       aria-modal="true"
       aria-labelledby={titleId}
       aria-describedby={descId}
-      className="fixed inset-0 z-50 flex items-center justify-center"
+      className="fixed inset-0 z-50 flex items-end md:items-center justify-center"
     >
       <div
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
         aria-hidden="true"
         onClick={onCancel}
       />
-      <div className="relative bg-bg-surface border border-border rounded-xl p-6 w-full max-w-md shadow-2xl">
+      <div className="relative bg-bg-surface border border-border rounded-t-xl md:rounded-xl p-6 w-full md:max-w-md shadow-2xl pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] md:pb-6">
+        {/* Drag handle — mobile only */}
+        <div className="w-8 h-1 bg-border rounded-full mx-auto mb-4 md:hidden" aria-hidden="true" />
         <h3
           id={titleId}
           className="text-lg font-medium text-text-primary mb-2"
@@ -87,18 +89,18 @@ export function DeleteModal({
         <p id={descId} className="text-sm text-text-secondary mb-6">
           {message}
         </p>
-        <div className="flex justify-end gap-3">
+        <div className="flex flex-col-reverse md:flex-row md:justify-end gap-3">
           <button
             ref={cancelRef}
             onClick={onCancel}
-            className="px-4 py-2 text-sm font-medium text-text-secondary bg-bg-elevated border border-border rounded-md hover:bg-bg-hover transition-colors"
+            className="px-4 py-2 min-h-[44px] md:min-h-0 text-sm font-medium text-text-secondary bg-bg-elevated border border-border rounded-md hover:bg-bg-hover transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={handleConfirm}
             disabled={confirming}
-            className="px-4 py-2 text-sm font-medium text-white bg-danger/80 hover:bg-danger rounded-md transition-colors disabled:opacity-50"
+            className="px-4 py-2 min-h-[44px] md:min-h-0 text-sm font-medium text-white bg-danger/80 hover:bg-danger rounded-md transition-colors disabled:opacity-50"
           >
             {confirming ? "Deleting..." : "Delete"}
           </button>
