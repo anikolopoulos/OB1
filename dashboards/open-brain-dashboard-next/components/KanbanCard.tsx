@@ -61,8 +61,8 @@ export function KanbanCard({
       onClick={() => onCardClick(thought)}
       className={`bg-bg-surface border rounded-lg p-3 cursor-pointer select-none transition-all ${
         isDragging
-          ? "border-violet/40 shadow-lg opacity-80 scale-[1.02]"
-          : "border-border hover:border-violet/30"
+          ? "border-purple/40 shadow-lg opacity-80 scale-[1.02]"
+          : "border-border hover:border-purple/30"
       }`}
     >
       <div className="flex items-start justify-between gap-2 mb-1.5">

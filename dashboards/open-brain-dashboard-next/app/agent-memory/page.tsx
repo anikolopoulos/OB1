@@ -83,7 +83,7 @@ export default async function AgentMemoryPage({
               href={statusUrl(item)}
               className={`border px-3 py-1.5 text-sm transition-colors ${
                 status === item
-                  ? "border-violet/30 bg-violet-surface text-violet"
+                  ? "border-purple/30 bg-purple-surface text-purple"
                   : "border-border bg-bg-surface text-text-secondary hover:bg-bg-hover hover:text-text-primary"
               }`}
             >
@@ -94,7 +94,7 @@ export default async function AgentMemoryPage({
             href={statusUrl("all")}
             className={`border px-3 py-1.5 text-sm transition-colors ${
               status === "all"
-                ? "border-violet/30 bg-violet-surface text-violet"
+                ? "border-purple/30 bg-purple-surface text-purple"
                 : "border-border bg-bg-surface text-text-secondary hover:bg-bg-hover hover:text-text-primary"
             }`}
           >
@@ -149,7 +149,7 @@ export default async function AgentMemoryPage({
                   <td className="px-4 py-3">
                     <Link
                       href={`/agent-memory/${memory.memory_id}`}
-                      className="font-medium text-text-primary hover:text-violet transition-colors"
+                      className="font-medium text-text-primary hover:text-purple transition-colors"
                     >
                       {memory.summary}
                     </Link>

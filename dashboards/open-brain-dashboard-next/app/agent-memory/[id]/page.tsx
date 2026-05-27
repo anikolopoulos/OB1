@@ -50,7 +50,7 @@ export default async function AgentMemoryDetailPage({
         <div className="min-w-0">
           <Link
             href="/agent-memory"
-            className="text-sm text-text-muted hover:text-violet transition-colors"
+            className="text-sm text-text-muted hover:text-purple transition-colors"
           >
             Back to Agent Memory
           </Link>

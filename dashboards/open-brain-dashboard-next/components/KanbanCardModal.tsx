@@ -136,7 +136,7 @@ export function KanbanCardModal({
               <button
                 type="button"
                 onClick={onClose}
-                className="px-3 py-1 text-xs text-danger hover:text-red-300 transition-colors"
+                className="px-3 py-1 text-xs text-danger hover:text-danger/80 transition-colors"
               >
                 Discard
               </button>
@@ -167,7 +167,7 @@ export function KanbanCardModal({
               <select
                 value={status}
                 onChange={(e) => setStatus(e.target.value)}
-                className="w-full bg-bg-hover border border-border rounded-lg px-2.5 py-1.5 text-sm text-text-primary focus:outline-none focus:border-violet/40"
+                className="w-full bg-bg-hover border border-border rounded-lg px-2.5 py-1.5 text-sm text-text-primary focus:outline-none focus:border-purple/40"
               >
                 {KANBAN_STATUSES.map((s) => (
                   <option key={s} value={s}>
@@ -186,7 +186,7 @@ export function KanbanCardModal({
                   const level = PRIORITY_LEVELS.find((p) => p.label === e.target.value);
                   if (level) setImportance(level.value);
                 }}
-                className="w-full bg-bg-hover border border-border rounded-lg px-2.5 py-1.5 text-sm text-text-primary focus:outline-none focus:border-violet/40"
+                className="w-full bg-bg-hover border border-border rounded-lg px-2.5 py-1.5 text-sm text-text-primary focus:outline-none focus:border-purple/40"
               >
                 {PRIORITY_LEVELS.map((p) => (
                   <option key={p.label} value={p.label}>
@@ -201,7 +201,7 @@ export function KanbanCardModal({
               <select
                 value={type}
                 onChange={(e) => setType(e.target.value)}
-                className="w-full bg-bg-hover border border-border rounded-lg px-2.5 py-1.5 text-sm text-text-primary focus:outline-none focus:border-violet/40"
+                className="w-full bg-bg-hover border border-border rounded-lg px-2.5 py-1.5 text-sm text-text-primary focus:outline-none focus:border-purple/40"
               >
                 {THOUGHT_TYPES.map((t) => (
                   <option key={t} value={t}>{t}</option>
@@ -222,7 +222,7 @@ export function KanbanCardModal({
               ref={textareaRef}
               value={content}
               onChange={(e) => setContent(e.target.value)}
-              className="w-full bg-bg-hover border border-border rounded-lg px-3 py-2 text-sm text-text-primary leading-relaxed resize-none focus:outline-none focus:border-violet/40 min-h-[100px] max-h-[40vh]"
+              className="w-full bg-bg-hover border border-border rounded-lg px-3 py-2 text-sm text-text-primary leading-relaxed resize-none focus:outline-none focus:border-purple/40 min-h-[100px] max-h-[40vh]"
               rows={4}
             />
           </div>
@@ -247,7 +247,7 @@ export function KanbanCardModal({
                   onArchive(thought.id);
                   onClose();
                 }}
-                className="text-sm text-text-muted hover:text-amber-400 transition-colors"
+                className="text-sm text-text-muted hover:text-warning transition-colors"
               >
                 Archive
               </button>
@@ -277,7 +277,7 @@ export function KanbanCardModal({
               disabled={!hasChanges}
               className={`px-4 py-1.5 text-sm rounded-lg transition-colors ${
                 hasChanges
-                  ? "bg-violet text-white hover:bg-violet/80"
+                  ? "bg-purple text-white hover:bg-purple/80"
                   : "bg-bg-hover text-text-muted cursor-not-allowed"
               }`}
             >

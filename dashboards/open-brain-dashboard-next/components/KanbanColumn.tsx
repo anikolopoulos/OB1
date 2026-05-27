@@ -9,7 +9,7 @@ import { KanbanCard } from "@/components/KanbanCard";
 
 const COLUMN_ACCENT: Record<string, string> = {
   new: "border-t-slate-500",
-  planning: "border-t-violet",
+  planning: "border-t-purple",
   active: "border-t-blue-500",
   review: "border-t-amber-500",
   done: "border-t-emerald-500",
@@ -56,7 +56,7 @@ export function KanbanColumn({
       <div
         ref={setNodeRef}
         className={`flex flex-col items-center rounded-lg border border-border border-t-2 ${accentClass} bg-bg-primary shrink-0 transition-all w-10 min-w-10 cursor-pointer max-h-[calc(100vh-130px)] md:max-h-[calc(100vh-220px)] ${
-          isOver ? "bg-violet/5 border-violet/20" : "hover:border-violet/20"
+          isOver ? "bg-purple/5 border-purple/20" : "hover:border-purple/20"
         }`}
         onClick={toggleCollapse}
         title={`Expand ${label} column`}
@@ -81,7 +81,7 @@ export function KanbanColumn({
     <div
       ref={setNodeRef}
       className={`flex flex-col rounded-lg border border-border border-t-2 ${accentClass} bg-bg-primary flex-1 min-w-[120px] md:min-w-0 transition-colors max-h-[calc(100vh-130px)] md:max-h-[calc(100vh-220px)] ${
-        isOver ? "bg-violet/5 border-violet/20" : ""
+        isOver ? "bg-purple/5 border-purple/20" : ""
       }`}
     >
       {/* Column header */}

@@ -31,7 +31,7 @@ export default async function RecallTracePage({
         <div>
         <Link
           href="/agent-memory"
-          className="text-sm text-text-muted hover:text-violet transition-colors"
+          className="text-sm text-text-muted hover:text-purple transition-colors"
         >
           Back to Agent Memory
         </Link>
@@ -48,9 +48,9 @@ export default async function RecallTracePage({
           name="request_id"
           defaultValue={requestId}
           placeholder="Recall request id"
-          className="ob1-glass-panel min-w-0 flex-1 px-3 py-2 text-sm text-text-primary outline-none focus:border-violet"
+          className="ob1-glass-panel min-w-0 flex-1 px-3 py-2 text-sm text-text-primary outline-none focus:border-purple"
         />
-        <button className="border border-violet/35 bg-violet-surface px-4 py-2 text-sm font-medium text-violet hover:bg-violet/15 transition-colors">
+        <button className="border border-purple/35 bg-purple-surface px-4 py-2 text-sm font-medium text-purple hover:bg-purple/15 transition-colors">
           Load trace
         </button>
       </form>
@@ -98,7 +98,7 @@ export default async function RecallTracePage({
                       {item.agent_memories ? (
                         <Link
                           href={`/agent-memory/${item.memory_id}`}
-                          className="font-medium text-text-primary hover:text-violet"
+                          className="font-medium text-text-primary hover:text-purple"
                         >
                           {item.agent_memories.summary}
                         </Link>

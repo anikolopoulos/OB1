@@ -6,11 +6,11 @@ import type { KanbanStatus } from "@/lib/types";
 import { KANBAN_STATUSES, KANBAN_LABELS } from "@/lib/types";
 
 const STATUS_COLORS: Record<string, string> = {
-  new: "bg-slate-500/15 text-slate-400 border-slate-500/20",
-  planning: "bg-violet/15 text-violet border-violet/20",
-  active: "bg-blue-500/15 text-blue-400 border-blue-500/20",
-  review: "bg-amber-500/15 text-amber-400 border-amber-500/20",
-  done: "bg-emerald-500/15 text-emerald-400 border-emerald-500/20",
+  new: "bg-bg-hover text-text-secondary border-border",
+  planning: "bg-purple/15 text-purple border-purple/20",
+  active: "bg-info/15 text-info border-info/20",
+  review: "bg-warning/15 text-warning border-warning/20",
+  done: "bg-success/15 text-success border-success/20",
 };
 
 export function KanbanSummary() {
@@ -50,10 +50,10 @@ export function KanbanSummary() {
 
   return (
     <Link href="/kanban" className="block group">
-      <div className="bg-bg-surface border border-border rounded-lg p-4 hover:border-violet/30 transition-colors">
+      <div className="bg-bg-surface border border-border rounded-lg p-4 hover:border-purple/30 transition-colors">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-medium">Workflow</h2>
-          <span className="text-xs text-text-muted group-hover:text-violet transition-colors">
+          <span className="text-xs text-text-muted group-hover:text-purple transition-colors">
             Open workflow →
           </span>
         </div>
