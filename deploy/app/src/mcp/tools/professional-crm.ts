@@ -204,12 +204,12 @@ export const professionalCrm: ExtensionDefinition = {
       'link_thought',
       'CROSS-EXTENSION: append a thought from core Open Brain into a contact\'s notes',
       {
-        thought_id: z.string().describe('Thought UUID from the brain\'s public.thoughts table'),
+        thought_id: z.string().describe('Thought UUID from the brain\'s thoughts table'),
         contact_id: z.string().describe('Contact UUID'),
       },
       withErrorHandler(async ({ thought_id, contact_id }) => {
         const { rows: thoughtRows } = await ctx.query(
-          `SELECT content FROM public.thoughts WHERE id = $1`,
+          `SELECT content FROM thoughts WHERE id = $1`,
           [thought_id],
         );
         if (thoughtRows.length === 0) throw new Error('Thought not found');
