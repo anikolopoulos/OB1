@@ -259,5 +259,116 @@ export const jobHunt: ExtensionDefinition = {
         return jsonResult(rows[0]);
       }),
     );
+
+    server.tool(
+      'search_job_contacts',
+      'Search job contacts with optional filters by company, role-in-process, or linkage status',
+      {
+        query: z.string().optional().describe('Search term across name, title, email, notes, role, and company name'),
+        company_id: z.string().optional().describe('Filter to a specific company UUID'),
+        role_in_process: z
+          .enum(['recruiter', 'hiring_manager', 'referral', 'interviewer', 'other'])
+          .optional()
+          .describe('Filter by role'),
+        only_unlinked: z.boolean().optional().describe('If true, only return contacts not yet linked to Professional CRM'),
+      },
+      withErrorHandler(async ({ query, company_id, role_in_process, only_unlinked }) => {
+        const conditions: string[] = [];
+        const values: unknown[] = [];
+        let idx = 1;
+
+        const q = query?.trim();
+        if (q) {
+          conditions.push(
+            `(jc.name ILIKE $${idx} OR jc.title ILIKE $${idx} OR jc.email ILIKE $${idx} OR jc.notes ILIKE $${idx} OR jc.role_in_process ILIKE $${idx} OR c.name ILIKE $${idx})`,
+          );
+          values.push(`%${q}%`);
+          idx++;
+        }
+        if (company_id) {
+          conditions.push(`jc.company_id = $${idx++}`);
+          values.push(company_id);
+        }
+        if (role_in_process) {
+          conditions.push(`jc.role_in_process = $${idx++}`);
+          values.push(role_in_process);
+        }
+        if (only_unlinked) {
+          conditions.push(`jc.professional_crm_contact_id IS NULL`);
+        }
+        const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+        const { rows } = await ctx.query(
+          `SELECT jc.*, c.name AS company_name
+             FROM job_contacts jc
+             LEFT JOIN companies c ON c.id = jc.company_id
+             ${where}
+             ORDER BY jc.created_at DESC`,
+          values,
+        );
+        return jsonResult({ count: rows.length, contacts: rows });
+      }),
+    );
+
+    server.tool(
+      'link_contact_to_professional_crm',
+      'CROSS-EXTENSION: create a Professional CRM contact from a job contact and remember the link',
+      {
+        job_contact_id: z.string().describe('Job contact UUID'),
+      },
+      withErrorHandler(async ({ job_contact_id }) => {
+        const { rows: jcRows } = await ctx.query(
+          `SELECT jc.*, c.name AS company_name
+             FROM job_contacts jc
+             LEFT JOIN companies c ON c.id = jc.company_id
+             WHERE jc.id = $1`,
+          [job_contact_id],
+        );
+        if (jcRows.length === 0) return errorResult('Job contact not found');
+        const jc = jcRows[0];
+
+        if (jc.professional_crm_contact_id) {
+          return jsonResult({
+            message: 'Already linked',
+            already_linked: true,
+            job_contact: jc,
+          });
+        }
+
+        const tags = ['job-hunt'];
+        if (jc.role_in_process) tags.push(jc.role_in_process);
+
+        const { rows: crmRows } = await ctx.query(
+          `INSERT INTO professional_contacts
+             (name, company, title, email, phone, linkedin_url, how_we_met, tags, notes, last_contacted)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+           RETURNING *`,
+          [
+            jc.name,
+            jc.company_name ?? null,
+            jc.title ?? null,
+            jc.email ?? null,
+            jc.phone ?? null,
+            jc.linkedin_url ?? null,
+            `Job search - ${jc.role_in_process ?? 'contact'}`,
+            tags,
+            jc.notes ?? null,
+            jc.last_contacted ?? null,
+          ],
+        );
+        const professionalContact = crmRows[0];
+
+        const { rows: updatedRows } = await ctx.query(
+          `UPDATE job_contacts SET professional_crm_contact_id = $1 WHERE id = $2 RETURNING *`,
+          [professionalContact.id, job_contact_id],
+        );
+
+        return jsonResult({
+          message: `Linked ${jc.name} to Professional CRM`,
+          job_contact: updatedRows[0],
+          professional_contact: professionalContact,
+        });
+      }),
+    );
   },
 };

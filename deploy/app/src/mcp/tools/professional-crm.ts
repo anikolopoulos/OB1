@@ -44,23 +44,45 @@ export const professionalCrm: ExtensionDefinition = {
 
     server.tool(
       'search_contacts',
-      'Search professional contacts by name, company, or tags',
+      'Search professional contacts. Uses PostgreSQL full-text search with ts_rank ordering; falls back to ILIKE if the FTS RPC is unavailable. Optional tag filter.',
       {
-        query: z.string().describe('Search term (matches name, company, title, or notes)'),
+        query: z.string().optional().describe('Search term — boolean-ANDed across name, company, title, notes, how_we_met'),
+        tags: z.array(z.string()).optional().describe('Filter by specific tags (array contains)'),
         limit: z.number().optional().default(20).describe('Max results'),
       },
-      withErrorHandler(async ({ query, limit }) => {
+      withErrorHandler(async ({ query, tags, limit }) => {
+        if (query && query.trim()) {
+          const tsQuery = query.trim().split(/\s+/).join(' & ');
+          try {
+            const { rows } = await ctx.query(
+              `SELECT * FROM crm_search_contacts_fts($1, $2, $3)`,
+              [tsQuery, tags ?? null, limit],
+            );
+            return jsonResult({ search_mode: 'fts', count: rows.length, contacts: rows });
+          } catch {
+            const { rows } = await ctx.query(
+              `SELECT * FROM professional_contacts
+                WHERE (name ILIKE '%' || $1 || '%'
+                   OR company ILIKE '%' || $1 || '%'
+                   OR title ILIKE '%' || $1 || '%'
+                   OR notes ILIKE '%' || $1 || '%')
+                  AND ($2::text[] IS NULL OR tags @> $2)
+                ORDER BY last_contacted DESC NULLS LAST
+                LIMIT $3`,
+              [query, tags ?? null, limit],
+            );
+            return jsonResult({ search_mode: 'ilike_fallback', count: rows.length, contacts: rows });
+          }
+        }
+
         const { rows } = await ctx.query(
           `SELECT * FROM professional_contacts
-            WHERE name ILIKE '%' || $1 || '%'
-               OR company ILIKE '%' || $1 || '%'
-               OR title ILIKE '%' || $1 || '%'
-               OR notes ILIKE '%' || $1 || '%'
-            ORDER BY last_contacted DESC NULLS LAST
+            WHERE ($1::text[] IS NULL OR tags @> $1)
+            ORDER BY name ASC
             LIMIT $2`,
-          [query, limit],
+          [tags ?? null, limit],
         );
-        return jsonResult(rows);
+        return jsonResult({ search_mode: 'list', count: rows.length, contacts: rows });
       }),
     );
 
@@ -175,6 +197,154 @@ export const professionalCrm: ExtensionDefinition = {
           ],
         );
         return jsonResult(rows[0]);
+      }),
+    );
+
+    server.tool(
+      'link_thought',
+      'CROSS-EXTENSION: append a thought from core Open Brain into a contact\'s notes',
+      {
+        thought_id: z.string().describe('Thought UUID from the brain\'s public.thoughts table'),
+        contact_id: z.string().describe('Contact UUID'),
+      },
+      withErrorHandler(async ({ thought_id, contact_id }) => {
+        const { rows: thoughtRows } = await ctx.query(
+          `SELECT content FROM public.thoughts WHERE id = $1`,
+          [thought_id],
+        );
+        if (thoughtRows.length === 0) throw new Error('Thought not found');
+
+        const { rows: contactRows } = await ctx.query(
+          `SELECT notes FROM professional_contacts WHERE id = $1`,
+          [contact_id],
+        );
+        if (contactRows.length === 0) throw new Error('Contact not found');
+
+        const stamp = new Date().toISOString().split('T')[0];
+        const linkNote = `\n\n[Linked Thought ${stamp}]: ${thoughtRows[0].content}`;
+        const newNotes = (contactRows[0].notes ?? '') + linkNote;
+
+        const { rows } = await ctx.query(
+          `UPDATE professional_contacts SET notes = $1, updated_at = now() WHERE id = $2 RETURNING *`,
+          [newNotes, contact_id],
+        );
+        return jsonResult({ message: `Linked thought to ${rows[0].name}`, contact: rows[0] });
+      }),
+    );
+
+    server.tool(
+      'prep_context',
+      'Meeting prep: full contact profile + recent interactions + open opportunities + pending follow-ups',
+      {
+        contact_id: z.string().describe('Contact UUID'),
+        interaction_limit: z.number().optional().default(10).describe('Max interactions to include'),
+      },
+      withErrorHandler(async ({ contact_id, interaction_limit }) => {
+        const [contactRes, interactionsRes, opportunitiesRes] = await Promise.all([
+          ctx.query(`SELECT * FROM professional_contacts WHERE id = $1`, [contact_id]),
+          ctx.query(
+            `SELECT * FROM contact_interactions
+              WHERE contact_id = $1
+              ORDER BY occurred_at DESC
+              LIMIT $2`,
+            [contact_id, interaction_limit],
+          ),
+          ctx.query(
+            `SELECT * FROM opportunities WHERE contact_id = $1 ORDER BY created_at DESC`,
+            [contact_id],
+          ),
+        ]);
+
+        if (contactRes.rows.length === 0) throw new Error('Contact not found');
+        const contact = contactRes.rows[0];
+        const interactions = interactionsRes.rows;
+        const opportunities = opportunitiesRes.rows;
+
+        const pendingFollowUps = interactions
+          .filter((i) => i.follow_up_needed && i.follow_up_notes)
+          .map((i) => ({ from_interaction: i.occurred_at, notes: i.follow_up_notes }));
+
+        const daysSinceContact = contact.last_contacted
+          ? Math.floor((Date.now() - new Date(contact.last_contacted).getTime()) / 86_400_000)
+          : null;
+
+        const activeOpportunities = opportunities.filter(
+          (o) => !['won', 'lost'].includes(o.stage),
+        );
+        const totalPipelineValue = activeOpportunities.reduce(
+          (sum, o) => sum + (parseFloat(o.value) || 0),
+          0,
+        );
+
+        return jsonResult({
+          briefing: {
+            contact: {
+              name: contact.name,
+              company: contact.company,
+              title: contact.title,
+              email: contact.email,
+              linkedin_url: contact.linkedin_url,
+              how_we_met: contact.how_we_met,
+              tags: contact.tags,
+              notes: contact.notes,
+            },
+            relationship: {
+              days_since_last_contact: daysSinceContact,
+              last_contacted: contact.last_contacted,
+              follow_up_date: contact.follow_up_date,
+              total_interactions: interactions.length,
+            },
+            recent_interactions: interactions.map((i) => ({
+              type: i.interaction_type,
+              date: i.occurred_at,
+              summary: i.summary,
+            })),
+            pending_follow_ups: pendingFollowUps,
+            opportunities: {
+              active_count: activeOpportunities.length,
+              total_pipeline_value: totalPipelineValue,
+              items: opportunities.map((o) => ({
+                title: o.title,
+                stage: o.stage,
+                value: o.value,
+                expected_close: o.expected_close_date,
+              })),
+            },
+          },
+        });
+      }),
+    );
+
+    server.tool(
+      'stale_contacts',
+      'Find contacts going cold — no interaction logged in the past N days, ordered by staleness',
+      {
+        days_threshold: z.number().optional().default(30).describe('Days without contact to consider stale'),
+        limit: z.number().optional().default(20).describe('Max results'),
+      },
+      withErrorHandler(async ({ days_threshold, limit }) => {
+        const { rows } = await ctx.query(
+          `SELECT id, name, company, title, tags, last_contacted, follow_up_date
+             FROM professional_contacts
+            WHERE last_contacted IS NULL
+               OR last_contacted < now() - ($1 * interval '1 day')
+            ORDER BY last_contacted ASC NULLS FIRST
+            LIMIT $2`,
+          [days_threshold, limit],
+        );
+
+        const contacts = rows.map((c) => ({
+          ...c,
+          days_since_contact: c.last_contacted
+            ? Math.floor((Date.now() - new Date(c.last_contacted).getTime()) / 86_400_000)
+            : null,
+        }));
+
+        return jsonResult({
+          threshold_days: days_threshold,
+          count: contacts.length,
+          stale_contacts: contacts,
+        });
       }),
     );
   },
