@@ -12,7 +12,7 @@ async function loginAction(formData: FormData) {
   }
 
   // Validate key against health endpoint and get brain identity
-  const apiUrl = process.env.API_URL;
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL;
   let brainName = "";
   let brainSlug = "";
   try {
