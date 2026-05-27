@@ -71,7 +71,7 @@ export function AddToBrain({
   const [executing, setExecuting] = useState(false);
   const [executeError, setExecuteError] = useState<string | null>(null);
 
-  const fetchJobDetail = useCallback(async (jobId: string) => {
+  const fetchJobDetail = useCallback(async (jobId: number) => {
     setLoadingDetail(true);
     try {
       const res = await fetch(`/api/ingest/${jobId}`);
