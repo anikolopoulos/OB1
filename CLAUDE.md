@@ -28,7 +28,7 @@ Every contribution lives in its own subfolder under the right category and must 
 ## Architecture
 
 The system runs as a Docker Compose stack:
-- **PostgreSQL** (pgvector/pgvector:pg18) — stores thoughts with vector embeddings, extension tables
+- **PostgreSQL** (pgvector/pgvector:pg17) — stores thoughts with vector embeddings, extension tables
 - **Node.js app** (Hono + MCP SDK) — serves MCP tools, Admin API, and Slack capture
 - **Reverse proxy** — Caddy (included), Traefik, or Cloudflare for HTTPS
 - **LiteLLM** (external) — OpenAI-compatible AI gateway for embeddings and metadata extraction
@@ -37,11 +37,106 @@ Multi-brain isolation: each user gets their own PostgreSQL schema (`brain_<slug>
 
 **Important**: The MCP endpoint (`/mcp`) uses the Node.js native `StreamableHTTPServerTransport` (not the web-standard version) and is handled by a raw `http.createServer` handler, bypassing Hono. This is required for SSE streaming to work correctly through reverse proxies and Cloudflare. All other routes (admin, slack, health) go through Hono.
 
-Key deploy files:
-- `deploy/docker-compose.yml` — service definitions
+### App Source Structure
+
+```
+deploy/app/src/
+├── index.ts                  — Entry point: raw HTTP server routes /mcp to MCP handler, everything else to Hono
+├── config.ts                 — Environment variable loader
+├── auth/
+│   ├── brain-resolver.ts     — Resolves API key → brain (SHA-256 hash lookup in management.brain_keys)
+│   └── admin-auth.ts         — Admin API key middleware
+├── db/
+│   ├── pool.ts               — PostgreSQL connection pool
+│   └── with-schema.ts        — Sets search_path per-query for brain isolation
+├── ai/
+│   ├── litellm-client.ts     — HTTP client for LiteLLM API
+│   ├── embeddings.ts         — text → vector(1536) via EMBEDDING_MODEL
+│   └── metadata.ts           — text → structured JSON (type, topics, people, actions) via METADATA_MODEL
+├── mcp/
+│   ├── server-factory.ts     — Creates MCP server, registers core tools + extensions based on schema tables
+│   ├── tool-context.ts       — ToolContext interface (query, getEmbedding, extractMetadata, schemaName)
+│   └── tools/
+│       ├── core.ts           — Core tools: search_thoughts, list_thoughts, thought_stats, capture_thought
+│       ├── registry.ts       — Extension registry (array of ExtensionDefinitions)
+│       ├── tool-helpers.ts   — withErrorHandler, textResult, errorResult helpers
+│       ├── household-knowledge.ts
+│       ├── home-maintenance.ts
+│       ├── family-calendar.ts
+│       ├── meal-planning.ts
+│       ├── professional-crm.ts
+│       └── job-hunt.ts
+├── admin/
+│   ├── router.ts             — Hono router for /admin/* (brain CRUD, API keys, extensions, Slack mapping)
+│   └── handlers/             — Individual handler files for each admin operation
+├── slack/
+│   ├── router.ts             — POST /slack/events
+│   └── webhook.ts            — Slack event verification + thought capture
+└── rest/
+    └── router.ts             — GET /api/* (stats, thoughts — used by dashboard)
+```
+
+### Request Flow
+
+```
+Client request
+  │
+  ├─ /mcp?key=...  ──→ raw http.createServer handler (bypasses Hono)
+  │                      → resolveBrain(apiKey) → schema lookup
+  │                      → createMcpServer(ctx) → register core + extension tools
+  │                      → StreamableHTTPServerTransport (SSE streaming)
+  │
+  ├─ /admin/*      ──→ Hono → adminAuth middleware → handler
+  ├─ /slack/events ──→ Hono → Slack signature verification → capture pipeline
+  ├─ /api/*        ──→ Hono → REST handlers (dashboard backend)
+  └─ /health       ──→ Hono → { status: "ok" }
+```
+
+### Extension System
+
+Extensions are modular tool sets that activate per-brain. Each `ExtensionDefinition` declares:
+- `name` — extension identifier
+- `requiredTables` — tables that must exist in the brain's schema
+- `register(server, ctx)` — function that registers the extension's MCP tools
+
+The server-factory checks `information_schema.tables` for each brain (cached 60s) and only registers extensions whose required tables are present. Extensions are installed via `POST /admin/brains/:slug/extensions/:name`, which clones tables from a template schema.
+
+### Environment Variables
+
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `POSTGRES_PASSWORD` | Yes | — | Database password |
+| `POSTGRES_USER` | No | `ob1` | Database user |
+| `POSTGRES_DB` | No | `ob1` | Database name |
+| `LITELLM_BASE_URL` | Yes | — | LiteLLM endpoint (e.g., `https://litellm.example.com/v1`) |
+| `LITELLM_API_KEY` | Yes | — | LiteLLM authentication |
+| `EMBEDDING_MODEL` | No | `text-embedding-3-small` | Model for vector embeddings (1536 dims) |
+| `METADATA_MODEL` | No | `gpt-4o-mini` | Model for metadata extraction |
+| `ADMIN_API_KEY` | Yes | — | Admin API authentication |
+| `SLACK_SIGNING_SECRET` | No | — | Slack webhook verification (required for Slack capture) |
+| `PORT` | No | `3000` | App listening port |
+
+### Database Schema Layout
+
+```
+management (shared)
+├── brains          — brain registry (id, slug, display_name, schema_name)
+├── brain_keys      — API keys (key_hash SHA-256, brain_id FK, revoked_at)
+└── slack_channels   — Slack channel → brain mapping
+
+brain_<slug> (per-brain, isolated via search_path)
+├── thoughts        — core table (content, embedding vector(1536), metadata jsonb, content_hash)
+├── match_thoughts()   — RPC for cosine similarity search
+├── upsert_thought()   — RPC for dedup-aware insert (SHA-256 content fingerprint)
+└── [extension tables] — installed per-brain (e.g., household_items, maintenance_tasks, etc.)
+```
+
+### Key Deploy Files
+
+- `deploy/docker-compose.yml` — service definitions (postgres, app, caddy)
 - `deploy/app/src/index.ts` — main entry point (raw HTTP for MCP, Hono for the rest)
 - `deploy/app/src/mcp/tools/` — all MCP tool implementations
-- `deploy/db/init/` — SQL init scripts (run automatically on first boot)
+- `deploy/db/init/` — SQL init scripts (run automatically on first boot, numbered for ordering)
 
 ## Upstream Relationship
 
