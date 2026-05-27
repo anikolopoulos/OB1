@@ -11,6 +11,10 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # SESSION_SECRET is validated at module init; provide a build-time placeholder
 # (the real secret is injected at runtime via the container environment)
 ENV SESSION_SECRET=build-time-placeholder-not-used-at-runtime-32chars
+# NEXT_PUBLIC_* vars are inlined at build time by Next.js — must be set here,
+# not only in docker-compose. The dashboard talks to the openbrain service via
+# the internal docker network.
+ENV NEXT_PUBLIC_API_URL=http://openbrain:3000/api
 RUN npm run build
 
 FROM node:22-alpine AS runner
