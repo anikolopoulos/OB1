@@ -12,7 +12,6 @@ import {
   ShieldCheck,
   Copy,
   Kanban,
-  History,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -49,8 +48,7 @@ export function BottomNav({ brainName }: { brainName?: string }) {
   const isMoreActive =
     pathname.startsWith("/audit") ||
     pathname.startsWith("/duplicates") ||
-    pathname.startsWith("/kanban") ||
-    pathname.startsWith("/agent-memory");
+    pathname.startsWith("/kanban");
   const moreHighlighted = isMoreActive || moreOpen;
 
   function menuLinkClass(href: string): string {
@@ -127,14 +125,6 @@ export function BottomNav({ brainName }: { brainName?: string }) {
                   >
                     <Kanban className="w-4 h-4" strokeWidth={1.5} />
                     Workflow
-                  </Link>
-                  <Link
-                    href="/agent-memory"
-                    onClick={closeMore}
-                    className={menuLinkClass("/agent-memory")}
-                  >
-                    <History className="w-4 h-4" strokeWidth={1.5} />
-                    Agent Memory
                   </Link>
                   <Link
                     href="/audit"

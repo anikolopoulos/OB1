@@ -11,7 +11,6 @@ import {
   Copy,
   PlusCircle,
   Kanban,
-  History,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { RestrictedToggle } from "@/components/RestrictedToggle";
@@ -21,7 +20,6 @@ const nav: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/thoughts", label: "Thoughts", icon: FileText },
   { href: "/kanban", label: "Workflow", icon: Kanban },
-  { href: "/agent-memory", label: "Agent Memory", icon: History },
   { href: "/search", label: "Search", icon: Search },
   { href: "/audit", label: "Audit", icon: ShieldCheck },
   { href: "/duplicates", label: "Duplicates", icon: Copy },
