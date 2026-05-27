@@ -77,7 +77,15 @@ export async function listThoughts(c: Context): Promise<Response> {
     const statuses = status.split(',').map((s) => s.trim()).filter(Boolean);
     if (statuses.length > 0) {
       p++;
-      conditions.push(`metadata->>'status' = ANY($${p}::text[])`);
+      // Include thoughts with null status when 'new' is requested — kanban
+      // defaults missing status to 'new' on the client, so the backend must
+      // surface them too.
+      const includeNull = statuses.includes('new');
+      conditions.push(
+        includeNull
+          ? `(metadata->>'status' IS NULL OR metadata->>'status' = ANY($${p}::text[]))`
+          : `metadata->>'status' = ANY($${p}::text[])`,
+      );
       params.push(statuses);
     }
   }
