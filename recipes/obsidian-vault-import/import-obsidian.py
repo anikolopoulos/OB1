@@ -59,6 +59,9 @@ DEFAULT_MIN_WORDS = 50
 
 # Default value for metadata.source on captured thoughts (overridable via --source-label)
 DEFAULT_SOURCE_LABEL = "obsidian"
+# Serialized frontmatter larger than this is omitted from thought metadata —
+# it would be duplicated into every chunk of the note and bloat the jsonb column.
+MAX_FRONTMATTER_BYTES = 16 * 1024
 
 # Chunking thresholds
 WHOLE_NOTE_THRESHOLD = 500      # notes under this word count → 1 thought
@@ -384,8 +387,15 @@ def insert_thought(conn, content: str, embedding: list[float] | None, metadata: 
     """
     embedding_json = json.dumps(embedding) if embedding else None
     # default=str handles non-JSON-native frontmatter values (e.g. YAML dates)
-    # that can end up nested under metadata['frontmatter'].
-    metadata_json = json.dumps(metadata, default=str)
+    # that can end up nested under metadata['frontmatter']. It cannot handle
+    # circular references (possible via YAML anchors), so a failure here must
+    # become a counted "failed" row, not a run-killing crash that loses the
+    # sync log for everything already inserted.
+    try:
+        metadata_json = json.dumps(metadata, default=str)
+    except (ValueError, TypeError) as e:
+        print(f"  Metadata serialization failed [{metadata.get('title', '?')}]: {e}", flush=True)
+        return "failed"
 
     for attempt in range(MAX_RETRIES):
         try:
@@ -414,11 +424,11 @@ def insert_thought(conn, content: str, embedding: list[float] | None, metadata: 
                 wait = RETRY_BACKOFF * (2 ** attempt)
                 time.sleep(wait)
                 continue
-            print(f"  Insert failed: {e}", flush=True)
+            print(f"  Insert failed [{metadata.get('title', '?')}]: {e}", flush=True)
             return "failed"
         except Exception as e:
             conn.rollback()
-            print(f"  Insert failed: {e}", flush=True)
+            print(f"  Insert failed [{metadata.get('title', '?')}]: {e}", flush=True)
             return "failed"
     return "failed"
 
@@ -474,7 +484,7 @@ def main():
                         help="Comma-separated additional folder names to skip")
     parser.add_argument("--after", type=str, default="",
                         help="Only import notes modified after this date (YYYY-MM-DD)")
-    parser.add_argument("--source-label", type=str, default="",
+    parser.add_argument("--source-label", type=str, default=None,
                         help=f"Override the metadata.source value on captured thoughts "
                              f"(default: {DEFAULT_SOURCE_LABEL})")
     parser.add_argument("--no-llm", action="store_true",
@@ -512,8 +522,12 @@ def main():
     litellm_api_key = os.environ.get("LITELLM_API_KEY", "")
     embedding_model = os.environ.get("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
 
-    # --source-label overrides metadata.source; falls back to the default when omitted
-    source_label = args.source_label.strip() if args.source_label.strip() else DEFAULT_SOURCE_LABEL
+    # --source-label overrides metadata.source; falls back to the default when omitted.
+    # A blank value is rejected rather than silently replaced with the default —
+    # that's the one case where the user's input would otherwise be discarded unseen.
+    if args.source_label is not None and not args.source_label.strip():
+        parser.error("--source-label must not be blank")
+    source_label = args.source_label.strip() if args.source_label else DEFAULT_SOURCE_LABEL
 
     if not args.dry_run:
         if not database_url:
@@ -691,6 +705,31 @@ def main():
                             verbose=args.verbose)
         note_date = extract_date(note['meta'], note['full_path'])
 
+        # Validate frontmatter once per note before it's copied into every
+        # chunk's metadata: it must serialize, stay within the size cap, and
+        # pass the same secret scan the content gets (frontmatter would
+        # otherwise be the one unscanned path into the database).
+        note_frontmatter = note['meta']
+        if note_frontmatter:
+            try:
+                fm_json = json.dumps(note_frontmatter, default=str)
+            except (ValueError, TypeError) as e:
+                print(f"  Warning: frontmatter for '{note['title']}' is not "
+                      f"serializable ({e}); omitted from thought metadata", flush=True)
+                note_frontmatter = None
+            else:
+                if len(fm_json) > MAX_FRONTMATTER_BYTES:
+                    print(f"  Warning: frontmatter for '{note['title']}' is "
+                          f"{len(fm_json) // 1024} KB (cap {MAX_FRONTMATTER_BYTES // 1024} KB); "
+                          f"omitted from thought metadata", flush=True)
+                    note_frontmatter = None
+                elif not args.no_secret_scan:
+                    secret_match = scan_for_secrets(fm_json)
+                    if secret_match:
+                        print(f"  FRONTMATTER OMITTED (secret detected): "
+                              f"{note['title']} — {secret_match}", flush=True)
+                        note_frontmatter = None
+
         for chunk in chunks:
             # Format content with context prefix
             section_part = f" > {chunk['section']}" if chunk['section'] else ""
@@ -706,8 +745,6 @@ def main():
                     'tags': note['tags'],
                     'date': note_date,
                     'wikilinks': note['wikilinks'],
-                    # Full parsed frontmatter, preserved as-is for downstream consumers
-                    'frontmatter': note['meta'],
                 },
                 'note_path': note['path'],
                 'note_hash': note['_hash'],
@@ -715,6 +752,10 @@ def main():
             }
             if chunk['section']:
                 thought['metadata']['section'] = chunk['section']
+            if note_frontmatter is not None:
+                # Full parsed frontmatter, preserved for downstream consumers
+                # (validated above: serializable, size-capped, secret-scanned)
+                thought['metadata']['frontmatter'] = note_frontmatter
 
             all_thoughts.append(thought)
 
