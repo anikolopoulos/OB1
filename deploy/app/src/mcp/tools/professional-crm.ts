@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ExtensionDefinition } from '../tool-context.js';
-import { withErrorHandler, jsonResult, textResult } from './tool-helpers.js';
+import { withErrorHandler, jsonResult, textResult, errorResult } from './tool-helpers.js';
 
 export const professionalCrm: ExtensionDefinition = {
   name: 'professional-crm',
@@ -39,6 +39,60 @@ export const professionalCrm: ExtensionDefinition = {
           ],
         );
         return jsonResult(rows[0]);
+      }),
+    );
+
+    server.tool(
+      'update_contact',
+      "Update an existing contact's details — only the fields you provide are changed",
+      {
+        contact_id: z.string().describe('UUID of the contact to update'),
+        name: z.string().optional().describe('Updated full name'),
+        company: z.string().optional().describe('Updated company name'),
+        title: z.string().optional().describe('Updated job title'),
+        email: z.string().optional().describe('Updated email address'),
+        phone: z.string().optional().describe('Updated phone number'),
+        linkedin_url: z.string().optional().describe('Updated LinkedIn profile URL'),
+        how_we_met: z.string().optional().describe('Updated context for how you met'),
+        tags: z.array(z.string()).optional().describe('Replace tags (e.g., ["ai", "consulting"])'),
+        notes: z.string().optional().describe('Replace notes with new content'),
+        follow_up_date: z
+          .string()
+          .nullable()
+          .optional()
+          .describe('Set follow-up date (YYYY-MM-DD), or null to clear'),
+      },
+      withErrorHandler(async (args) => {
+        const setClauses: string[] = ['updated_at = now()'];
+        const values: unknown[] = [];
+        let idx = 1;
+
+        if (args.name !== undefined) { setClauses.push(`name = $${idx++}`); values.push(args.name); }
+        if (args.company !== undefined) { setClauses.push(`company = $${idx++}`); values.push(args.company); }
+        if (args.title !== undefined) { setClauses.push(`title = $${idx++}`); values.push(args.title); }
+        if (args.email !== undefined) { setClauses.push(`email = $${idx++}`); values.push(args.email); }
+        if (args.phone !== undefined) { setClauses.push(`phone = $${idx++}`); values.push(args.phone); }
+        if (args.linkedin_url !== undefined) { setClauses.push(`linkedin_url = $${idx++}`); values.push(args.linkedin_url); }
+        if (args.how_we_met !== undefined) { setClauses.push(`how_we_met = $${idx++}`); values.push(args.how_we_met); }
+        if (args.tags !== undefined) { setClauses.push(`tags = $${idx++}`); values.push(args.tags); }
+        if (args.notes !== undefined) { setClauses.push(`notes = $${idx++}`); values.push(args.notes); }
+        if (args.follow_up_date !== undefined) { setClauses.push(`follow_up_date = $${idx++}`); values.push(args.follow_up_date); }
+
+        if (setClauses.length <= 1) {
+          return textResult('No fields provided to update');
+        }
+
+        values.push(args.contact_id);
+        const { rows } = await ctx.query(
+          `UPDATE professional_contacts SET ${setClauses.join(', ')} WHERE id = $${idx} RETURNING *`,
+          values,
+        );
+
+        if (rows.length === 0) {
+          return errorResult('Contact not found');
+        }
+
+        return jsonResult({ message: `Updated contact: ${rows[0].name}`, contact: rows[0] });
       }),
     );
 
