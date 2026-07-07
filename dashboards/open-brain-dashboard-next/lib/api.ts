@@ -23,7 +23,7 @@ function headers(apiKey: string): HeadersInit {
   };
 }
 
-async function apiFetch<T>(
+export async function apiFetch<T>(
   apiKey: string,
   path: string,
   init?: RequestInit

@@ -12,16 +12,42 @@ import {
   ShieldCheck,
   Copy,
   Kanban,
+  Clock,
+  Folder,
+  Plug,
+  Sparkles,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { RestrictedToggle } from "@/components/RestrictedToggle";
+import { EXTENSIONS, type ExtensionIcon } from "@/extensions.config";
+
+// Icon registry extensions resolve against — kept in sync with Sidebar.tsx.
+const EXTENSION_ICONS: Record<ExtensionIcon, LucideIcon> = {
+  clock: Clock,
+  folder: Folder,
+  plug: Plug,
+  sparkles: Sparkles,
+};
 
 const tabs: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/thoughts", label: "Thoughts", icon: FileText },
   { href: "/search", label: "Search", icon: Search },
   { href: "/ingest", label: "Add", icon: PlusCircle },
+];
+
+// Items shown in the "More" popover: core overflow items, then any
+// registered extensions (in declaration order). See extensions.config.ts.
+const moreItems: { href: string; label: string; icon: LucideIcon }[] = [
+  { href: "/kanban", label: "Workflow", icon: Kanban },
+  { href: "/audit", label: "Audit", icon: ShieldCheck },
+  { href: "/duplicates", label: "Duplicates", icon: Copy },
+  ...EXTENSIONS.map((e) => ({
+    href: e.href,
+    label: e.label,
+    icon: EXTENSION_ICONS[e.icon],
+  })),
 ];
 
 export function BottomNav({ brainName }: { brainName?: string }) {
@@ -45,10 +71,7 @@ export function BottomNav({ brainName }: { brainName?: string }) {
 
   if (pathname === "/login") return null;
 
-  const isMoreActive =
-    pathname.startsWith("/audit") ||
-    pathname.startsWith("/duplicates") ||
-    pathname.startsWith("/kanban");
+  const isMoreActive = moreItems.some(({ href }) => pathname.startsWith(href));
   const moreHighlighted = isMoreActive || moreOpen;
 
   function menuLinkClass(href: string): string {
@@ -118,30 +141,17 @@ export function BottomNav({ brainName }: { brainName?: string }) {
               />
               <div className="absolute bottom-full right-0 mb-2 w-56 z-50 bg-bg-surface border border-border rounded-xl shadow-2xl overflow-hidden">
                 <div className="py-1">
-                  <Link
-                    href="/kanban"
-                    onClick={closeMore}
-                    className={menuLinkClass("/kanban")}
-                  >
-                    <Kanban className="w-4 h-4" strokeWidth={1.5} />
-                    Workflow
-                  </Link>
-                  <Link
-                    href="/audit"
-                    onClick={closeMore}
-                    className={menuLinkClass("/audit")}
-                  >
-                    <ShieldCheck className="w-4 h-4" strokeWidth={1.5} />
-                    Audit
-                  </Link>
-                  <Link
-                    href="/duplicates"
-                    onClick={closeMore}
-                    className={menuLinkClass("/duplicates")}
-                  >
-                    <Copy className="w-4 h-4" strokeWidth={1.5} />
-                    Duplicates
-                  </Link>
+                  {moreItems.map(({ href, label, icon: Icon }) => (
+                    <Link
+                      key={href}
+                      href={href}
+                      onClick={closeMore}
+                      className={menuLinkClass(href)}
+                    >
+                      <Icon className="w-4 h-4" strokeWidth={1.5} />
+                      {label}
+                    </Link>
+                  ))}
                 </div>
                 <div className="border-t border-border py-1 px-1 space-y-0.5">
                   <ThemeToggle />

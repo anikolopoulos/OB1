@@ -6,6 +6,42 @@ import {
 } from "@/lib/api";
 import { requireSession, AuthError } from "@/lib/auth";
 
+// ── Auto-routing heuristic ──────────────────────────────────────────────────
+
+/**
+ * Determines whether input text should be routed to smart-ingest extraction
+ * (multiple thoughts) rather than single-thought capture.
+ *
+ * Heuristic rules (any match → extract):
+ *  1. Long text (> 500 chars)
+ *  2. Multiple paragraphs (2+)
+ *  3. Bullet or numbered lists (2+ items)
+ *  4. Transcript/speaker markers (2+ lines like "Alan: ...")
+ *  5. Timestamp patterns (e.g. "10:32 AM")
+ *  6. Email-style headers (From:, Subject:, Date:, To:)
+ */
+function shouldExtract(text: string): boolean {
+  if (text.length > 500) return true;
+
+  const paragraphs = text.split(/\n\s*\n/).filter((p) => p.trim());
+  if (paragraphs.length >= 2) return true;
+
+  const lines = text.split("\n");
+  const bulletLines = lines.filter((l) =>
+    /^\s*[-*•]\s|^\s*\d+[.)]\s/.test(l)
+  );
+  if (bulletLines.length >= 2) return true;
+
+  const speakerLines = lines.filter((l) => /^\s*\w+:\s/.test(l));
+  if (speakerLines.length >= 2) return true;
+
+  if (/\d{1,2}:\d{2}\s*(AM|PM)?/i.test(text)) return true;
+
+  if (/^(From|Subject|Date|To):\s/m.test(text)) return true;
+
+  return false;
+}
+
 // ── GET — list ingestion jobs ───────────────────────────────────────────────
 
 export async function GET() {
@@ -57,11 +93,14 @@ export async function POST(request: NextRequest) {
     }
 
     const trimmed = text.trim();
+    const resolvedMode =
+      mode === "auto"
+        ? shouldExtract(trimmed)
+          ? "extract"
+          : "single"
+        : mode;
 
-    // "single" mode is only used when explicitly requested — auto always
-    // goes through extraction so the LLM can split multi-fact inputs and
-    // dry_run works correctly.
-    if (mode === "single") {
+    if (resolvedMode === "single") {
       const result = await captureThought(apiKey, trimmed);
       return NextResponse.json({
         path: "single" as const,
@@ -71,7 +110,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // auto and extract both go through smart-ingest
+    // extract path → smart-ingest
     const result = await triggerIngest(apiKey, trimmed, { dry_run });
     const extracted =
       (result as Record<string, unknown>).extracted_count ?? null;
