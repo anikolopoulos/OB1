@@ -11,27 +11,13 @@ import {
   Copy,
   PlusCircle,
   Kanban,
-  Clock,
-  Folder,
-  Plug,
-  Sparkles,
 } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
 import { RestrictedToggle } from "@/components/RestrictedToggle";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { EXTENSIONS, type ExtensionIcon } from "@/extensions.config";
-
-// Icon registry extensions resolve against — keyed by the string names
-// used in extensions.config.ts (kept JSX-free so it stays plain data).
-const EXTENSION_ICONS: Record<ExtensionIcon, LucideIcon> = {
-  clock: Clock,
-  folder: Folder,
-  plug: Plug,
-  sparkles: Sparkles,
-};
+import { extensionNavItems, type NavItem } from "@/components/extension-nav";
 
 // Core nav items, always present.
-const coreNav: { href: string; label: string; icon: LucideIcon }[] = [
+const coreNav: NavItem[] = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/thoughts", label: "Thoughts", icon: FileText },
   { href: "/kanban", label: "Workflow", icon: Kanban },
@@ -41,21 +27,13 @@ const coreNav: { href: string; label: string; icon: LucideIcon }[] = [
 ];
 
 // Trailing nav items, always rendered last.
-const trailingNav: { href: string; label: string; icon: LucideIcon }[] = [
+const trailingNav: NavItem[] = [
   { href: "/ingest", label: "Add", icon: PlusCircle },
 ];
 
 // Final nav = core items, then any registered extensions (in declaration
 // order), then the trailing "Add" entry. See extensions.config.ts.
-const nav: { href: string; label: string; icon: LucideIcon }[] = [
-  ...coreNav,
-  ...EXTENSIONS.map((e) => ({
-    href: e.href,
-    label: e.label,
-    icon: EXTENSION_ICONS[e.icon],
-  })),
-  ...trailingNav,
-];
+const nav: NavItem[] = [...coreNav, ...extensionNavItems(), ...trailingNav];
 
 export function Sidebar({ brainName }: { brainName?: string }) {
   const pathname = usePathname();

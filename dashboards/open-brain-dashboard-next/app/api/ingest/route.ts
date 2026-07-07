@@ -5,42 +5,10 @@ import {
   captureThought,
 } from "@/lib/api";
 import { requireSession, AuthError } from "@/lib/auth";
+import { shouldExtract } from "@/lib/ingest-routing";
 
-// ── Auto-routing heuristic ──────────────────────────────────────────────────
-
-/**
- * Determines whether input text should be routed to smart-ingest extraction
- * (multiple thoughts) rather than single-thought capture.
- *
- * Heuristic rules (any match → extract):
- *  1. Long text (> 500 chars)
- *  2. Multiple paragraphs (2+)
- *  3. Bullet or numbered lists (2+ items)
- *  4. Transcript/speaker markers (2+ lines like "Alan: ...")
- *  5. Timestamp patterns (e.g. "10:32 AM")
- *  6. Email-style headers (From:, Subject:, Date:, To:)
- */
-function shouldExtract(text: string): boolean {
-  if (text.length > 500) return true;
-
-  const paragraphs = text.split(/\n\s*\n/).filter((p) => p.trim());
-  if (paragraphs.length >= 2) return true;
-
-  const lines = text.split("\n");
-  const bulletLines = lines.filter((l) =>
-    /^\s*[-*•]\s|^\s*\d+[.)]\s/.test(l)
-  );
-  if (bulletLines.length >= 2) return true;
-
-  const speakerLines = lines.filter((l) => /^\s*\w+:\s/.test(l));
-  if (speakerLines.length >= 2) return true;
-
-  if (/\d{1,2}:\d{2}\s*(AM|PM)?/i.test(text)) return true;
-
-  if (/^(From|Subject|Date|To):\s/m.test(text)) return true;
-
-  return false;
-}
+const VALID_MODES = ["auto", "single", "extract"] as const;
+type IngestMode = (typeof VALID_MODES)[number];
 
 // ── GET — list ingestion jobs ───────────────────────────────────────────────
 
@@ -81,9 +49,16 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { text, mode = "auto", dry_run } = body as {
       text: string;
-      mode?: "auto" | "single" | "extract";
+      mode?: IngestMode;
       dry_run?: boolean;
     };
+
+    if (!(VALID_MODES as readonly string[]).includes(mode)) {
+      return NextResponse.json(
+        { error: `Invalid mode: ${String(mode)}` },
+        { status: 400 }
+      );
+    }
 
     if (!text?.trim()) {
       return NextResponse.json(
@@ -92,18 +67,35 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // The single-capture path writes immediately and has no dry-run support —
+    // an explicit single+dry_run request is a contradiction we must not
+    // resolve silently with a real write.
+    if (mode === "single" && dry_run) {
+      return NextResponse.json(
+        { error: "dry_run is not supported for single-thought capture" },
+        { status: 400 }
+      );
+    }
+
     const trimmed = text.trim();
-    const resolvedMode =
-      mode === "auto"
-        ? shouldExtract(trimmed)
-          ? "extract"
-          : "single"
-        : mode;
+
+    // Resolve "auto" to a concrete path; explicit modes pass through.
+    // dry_run forces extraction: only the smart-ingest path can preview.
+    let resolvedMode: "single" | "extract";
+    if (mode === "auto") {
+      resolvedMode = dry_run || shouldExtract(trimmed) ? "extract" : "single";
+      console.log(
+        `[ingest] auto-routed to ${resolvedMode} (len=${trimmed.length}${dry_run ? ", dry_run" : ""})`
+      );
+    } else {
+      resolvedMode = mode;
+    }
 
     if (resolvedMode === "single") {
       const result = await captureThought(apiKey, trimmed);
       return NextResponse.json({
         path: "single" as const,
+        requested_mode: mode,
         thought_id: result.thought_id,
         type: result.type,
         message: "Saved as 1 thought",
@@ -117,6 +109,7 @@ export async function POST(request: NextRequest) {
     const isDryRun = result.status === "dry_run_complete";
     return NextResponse.json({
       path: "extract" as const,
+      requested_mode: mode,
       job_id: result.job_id,
       status: result.status,
       extracted_count: extracted,

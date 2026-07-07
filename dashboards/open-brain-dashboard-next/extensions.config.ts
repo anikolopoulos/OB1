@@ -27,8 +27,19 @@ export interface ExtensionNavEntry {
   href: string;
   /** Sidebar label. */
   label: string;
-  /** Icon key resolved against the registry in Sidebar.tsx. */
+  /** Icon key resolved against the registry in components/extension-nav.ts. */
   icon: ExtensionIcon;
 }
 
 export const EXTENSIONS: ExtensionNavEntry[] = [];
+
+// Fail fast at module load: a malformed href (empty, relative, or "/")
+// would otherwise only surface as a subtle nav-highlighting glitch —
+// pathname.startsWith("") is true everywhere.
+for (const e of EXTENSIONS) {
+  if (!e.href.startsWith("/") || e.href === "/") {
+    throw new Error(
+      `[extensions] Invalid href "${e.href}" for "${e.label}" — must start with "/" and not be "/"`
+    );
+  }
+}

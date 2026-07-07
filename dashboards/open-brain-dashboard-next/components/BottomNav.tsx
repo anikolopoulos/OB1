@@ -12,23 +12,11 @@ import {
   ShieldCheck,
   Copy,
   Kanban,
-  Clock,
-  Folder,
-  Plug,
-  Sparkles,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { RestrictedToggle } from "@/components/RestrictedToggle";
-import { EXTENSIONS, type ExtensionIcon } from "@/extensions.config";
-
-// Icon registry extensions resolve against — kept in sync with Sidebar.tsx.
-const EXTENSION_ICONS: Record<ExtensionIcon, LucideIcon> = {
-  clock: Clock,
-  folder: Folder,
-  plug: Plug,
-  sparkles: Sparkles,
-};
+import { extensionNavItems, type NavItem } from "@/components/extension-nav";
 
 const tabs: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -39,15 +27,11 @@ const tabs: { href: string; label: string; icon: LucideIcon }[] = [
 
 // Items shown in the "More" popover: core overflow items, then any
 // registered extensions (in declaration order). See extensions.config.ts.
-const moreItems: { href: string; label: string; icon: LucideIcon }[] = [
+const moreItems: NavItem[] = [
   { href: "/kanban", label: "Workflow", icon: Kanban },
   { href: "/audit", label: "Audit", icon: ShieldCheck },
   { href: "/duplicates", label: "Duplicates", icon: Copy },
-  ...EXTENSIONS.map((e) => ({
-    href: e.href,
-    label: e.label,
-    icon: EXTENSION_ICONS[e.icon],
-  })),
+  ...extensionNavItems(),
 ];
 
 export function BottomNav({ brainName }: { brainName?: string }) {

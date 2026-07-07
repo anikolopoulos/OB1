@@ -68,10 +68,14 @@ is plain TypeScript (no JSX). Supported keys are declared in
 `extensions.config.ts` as `ExtensionIcon`. To add a new icon:
 
 1. Add the key to the `ExtensionIcon` union.
-2. Import the matching `lucide-react` icon in `components/Sidebar.tsx`
-   (and `components/BottomNav.tsx` if it should also appear in the
-   mobile "More" menu).
-3. Map the key in each file's `EXTENSION_ICONS` record.
+2. Import the matching `lucide-react` icon in
+   `components/extension-nav.ts` and map the key in its
+   `EXTENSION_ICONS` record.
+
+That single module feeds both the sidebar and the mobile "More" menu,
+so there is exactly one place to edit. An unmapped key degrades to a
+logged fallback icon rather than crashing the nav. Hrefs are validated
+at load time — they must start with `/` and must not be `/` itself.
 
 ## Position in the sidebar
 
