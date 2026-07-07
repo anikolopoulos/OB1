@@ -79,7 +79,12 @@ export const professionalCrm: ExtensionDefinition = {
         if (args.follow_up_date !== undefined) { setClauses.push(`follow_up_date = $${idx++}`); values.push(args.follow_up_date); }
 
         if (setClauses.length <= 1) {
-          return textResult('No fields provided to update');
+          // errorResult (not textResult): unknown keys are stripped by zod
+          // before the handler runs, so a fully typo'd request lands here —
+          // it must not read as success to the calling model.
+          return errorResult(
+            'No updatable fields provided. Accepted fields: name, company, title, email, phone, linkedin_url, how_we_met, tags, notes, follow_up_date',
+          );
         }
 
         values.push(args.contact_id);
@@ -89,11 +94,11 @@ export const professionalCrm: ExtensionDefinition = {
         );
 
         if (rows.length === 0) {
-          return errorResult('Contact not found');
+          return errorResult(`Contact not found: ${args.contact_id}`);
         }
 
         return jsonResult({ message: `Updated contact: ${rows[0].name}`, contact: rows[0] });
-      }),
+      }, 'update_contact'),
     );
 
     server.tool(

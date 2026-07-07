@@ -21,12 +21,13 @@ export interface ToolResult {
  */
 export function withErrorHandler<T>(
   fn: (args: T, extra: unknown) => Promise<ToolResult>,
+  toolName?: string,
 ): (args: T, extra: unknown) => Promise<ToolResult> {
   return async (args: T, extra: unknown) => {
     try {
       return await fn(args, extra);
     } catch (err: unknown) {
-      console.error('[mcp-tool] Unhandled error:', err);
+      console.error(`[mcp-tool${toolName ? `:${toolName}` : ''}] Unhandled error:`, err);
       const message = err instanceof Error ? err.message : String(err);
       return {
         content: [{ type: 'text' as const, text: `Error: ${message}` }],
