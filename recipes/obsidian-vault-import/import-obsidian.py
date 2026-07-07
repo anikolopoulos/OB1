@@ -57,6 +57,9 @@ ALWAYS_SKIP = {".obsidian", ".trash", ".git", "node_modules"}
 # Default minimum word count to include a note
 DEFAULT_MIN_WORDS = 50
 
+# Default value for metadata.source on captured thoughts (overridable via --source-label)
+DEFAULT_SOURCE_LABEL = "obsidian"
+
 # Chunking thresholds
 WHOLE_NOTE_THRESHOLD = 500      # notes under this word count → 1 thought
 LLM_CHUNK_THRESHOLD = 1000     # sections over this → LLM distillation
@@ -380,7 +383,9 @@ def insert_thought(conn, content: str, embedding: list[float] | None, metadata: 
     Returns 'inserted', 'duplicate', or 'failed'.
     """
     embedding_json = json.dumps(embedding) if embedding else None
-    metadata_json = json.dumps(metadata)
+    # default=str handles non-JSON-native frontmatter values (e.g. YAML dates)
+    # that can end up nested under metadata['frontmatter'].
+    metadata_json = json.dumps(metadata, default=str)
 
     for attempt in range(MAX_RETRIES):
         try:
@@ -469,6 +474,9 @@ def main():
                         help="Comma-separated additional folder names to skip")
     parser.add_argument("--after", type=str, default="",
                         help="Only import notes modified after this date (YYYY-MM-DD)")
+    parser.add_argument("--source-label", type=str, default="",
+                        help=f"Override the metadata.source value on captured thoughts "
+                             f"(default: {DEFAULT_SOURCE_LABEL})")
     parser.add_argument("--no-llm", action="store_true",
                         help="Disable LLM chunking (heading splits only, no API cost)")
     parser.add_argument("--no-embed", action="store_true",
@@ -503,6 +511,9 @@ def main():
     litellm_base_url = os.environ.get("LITELLM_BASE_URL", "http://localhost:4000/v1").rstrip("/")
     litellm_api_key = os.environ.get("LITELLM_API_KEY", "")
     embedding_model = os.environ.get("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
+
+    # --source-label overrides metadata.source; falls back to the default when omitted
+    source_label = args.source_label.strip() if args.source_label.strip() else DEFAULT_SOURCE_LABEL
 
     if not args.dry_run:
         if not database_url:
@@ -577,6 +588,8 @@ def main():
         print(f"Chunking: hybrid (headings + LLM fallback)")
     else:
         print(f"Chunking: headings only (--no-llm)")
+    if source_label != DEFAULT_SOURCE_LABEL:
+        print(f"Source:   {source_label} (overridden via --source-label)")
     print()
 
     # ── Stage 1+2: Walk + Parse ──────────────────────────────────────────────
@@ -687,12 +700,14 @@ def main():
                 'content': content,
                 'fingerprint': compute_fingerprint(content),
                 'metadata': {
-                    'source': 'obsidian',
+                    'source': source_label,
                     'title': note['title'],
                     'folder': note['folder'],
                     'tags': note['tags'],
                     'date': note_date,
                     'wikilinks': note['wikilinks'],
+                    # Full parsed frontmatter, preserved as-is for downstream consumers
+                    'frontmatter': note['meta'],
                 },
                 'note_path': note['path'],
                 'note_hash': note['_hash'],

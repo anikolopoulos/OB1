@@ -103,6 +103,7 @@ FILE LOCATION
 | `--min-words N` | Skip notes with fewer than N words (default: 50) |
 | `--skip-folders X` | Comma-separated additional folder names to skip |
 | `--after DATE` | Only import notes modified after this date (YYYY-MM-DD) |
+| `--source-label X` | Override the `metadata.source` value on captured thoughts (default: `obsidian`) |
 | `--no-llm` | Disable LLM chunking — heading splits only, zero API cost beyond embeddings |
 | `--no-embed` | Skip embedding generation (insert thoughts without vectors) |
 | `--no-secret-scan` | Disable secret detection (not recommended) |
