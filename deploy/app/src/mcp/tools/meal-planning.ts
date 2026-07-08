@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import type { ExtensionDefinition } from '../tool-context.js';
-import { withErrorHandler, jsonResult, errorResult } from './tool-helpers.js';
+import { registerTool, jsonResult, errorResult } from './tool-helpers.js';
 
 export const mealPlanning: ExtensionDefinition = {
   name: 'meal-planning',
   requiredTables: ['recipes', 'meal_plans', 'shopping_lists'],
   register(server, ctx) {
-    server.tool(
+    registerTool(
+      server,
       'add_recipe',
       'Add a recipe with ingredients and instructions',
       {
@@ -29,7 +30,7 @@ export const mealPlanning: ExtensionDefinition = {
         rating: z.number().optional().describe('Rating 1-5'),
         notes: z.string().optional().describe('Additional notes'),
       },
-      withErrorHandler(async (args) => {
+      async (args) => {
         const { rows } = await ctx.query(
           `INSERT INTO recipes (name, cuisine, prep_time_minutes, cook_time_minutes, servings, ingredients, instructions, tags, rating, notes, updated_at)
            VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11)
@@ -50,10 +51,11 @@ export const mealPlanning: ExtensionDefinition = {
         );
 
         return jsonResult(rows[0]);
-      })
+      }
     );
 
-    server.tool(
+    registerTool(
+      server,
       'search_recipes',
       'Search recipes by name, cuisine, tags, or ingredient',
       {
@@ -65,7 +67,7 @@ export const mealPlanning: ExtensionDefinition = {
           .optional()
           .describe('Search for recipes containing this ingredient'),
       },
-      withErrorHandler(async (args) => {
+      async (args) => {
         const conditions: string[] = [];
         const params: unknown[] = [];
         let idx = 0;
@@ -100,10 +102,11 @@ export const mealPlanning: ExtensionDefinition = {
         const { rows } = await ctx.query(sql, params);
 
         return jsonResult(rows);
-      })
+      }
     );
 
-    server.tool(
+    registerTool(
+      server,
       'update_recipe',
       'Update an existing recipe',
       {
@@ -128,7 +131,7 @@ export const mealPlanning: ExtensionDefinition = {
         rating: z.number().optional().describe('Rating 1-5'),
         notes: z.string().optional().describe('Additional notes'),
       },
-      withErrorHandler(async (args) => {
+      async (args) => {
         const setClauses: string[] = ['updated_at = NOW()'];
         const params: unknown[] = [];
         let idx = 0;
@@ -197,10 +200,11 @@ export const mealPlanning: ExtensionDefinition = {
         }
 
         return jsonResult(rows[0]);
-      })
+      }
     );
 
-    server.tool(
+    registerTool(
+      server,
       'create_meal_plan',
       'Plan meals for a week',
       {
@@ -220,7 +224,7 @@ export const mealPlanning: ExtensionDefinition = {
             'Array of meal entries: [{day_of_week, meal_type, recipe_id?, custom_meal?, servings?, notes?}, ...]'
           ),
       },
-      withErrorHandler(async (args) => {
+      async (args) => {
         if (args.meals.length === 0) {
           return errorResult('meals array is empty');
         }
@@ -265,16 +269,17 @@ export const mealPlanning: ExtensionDefinition = {
         );
 
         return jsonResult(rows);
-      })
+      }
     );
 
-    server.tool(
+    registerTool(
+      server,
       'get_meal_plan',
       'View the meal plan for a given week',
       {
         week_start: z.string().describe('Monday of the week (YYYY-MM-DD)'),
       },
-      withErrorHandler(async (args) => {
+      async (args) => {
         const { rows } = await ctx.query(
           `SELECT mp.*, r.name AS recipe_name, r.cuisine, r.prep_time_minutes, r.cook_time_minutes
            FROM meal_plans mp
@@ -285,16 +290,17 @@ export const mealPlanning: ExtensionDefinition = {
         );
 
         return jsonResult(rows);
-      })
+      }
     );
 
-    server.tool(
+    registerTool(
+      server,
       'generate_shopping_list',
       "Auto-generate a shopping list from a week's meal plan by aggregating recipe ingredients",
       {
         week_start: z.string().describe('Monday of the week (YYYY-MM-DD)'),
       },
-      withErrorHandler(async (args) => {
+      async (args) => {
         // Get the meal plan with recipe ingredients for the week
         const { rows: mealPlan } = await ctx.query(
           `SELECT mp.*, r.id AS r_id, r.ingredients AS r_ingredients, r.name AS r_name
@@ -364,7 +370,7 @@ export const mealPlanning: ExtensionDefinition = {
         }
 
         return jsonResult(result);
-      })
+      }
     );
   },
 };

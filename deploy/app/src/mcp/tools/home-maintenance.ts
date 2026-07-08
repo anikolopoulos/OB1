@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import type { ExtensionDefinition } from '../tool-context.js';
-import { withErrorHandler, jsonResult } from './tool-helpers.js';
+import { registerTool, jsonResult } from './tool-helpers.js';
 
 export const homeMaintenance: ExtensionDefinition = {
   name: 'home-maintenance',
   requiredTables: ['maintenance_tasks', 'maintenance_logs'],
   register(server, ctx) {
-    server.tool(
+    registerTool(
+      server,
       'add_maintenance_task',
       'Create a new maintenance task (recurring or one-time)',
       {
@@ -31,7 +32,7 @@ export const homeMaintenance: ExtensionDefinition = {
           .describe('Priority level'),
         notes: z.string().optional().describe('Additional notes about this task'),
       },
-      withErrorHandler(async ({ name, category, frequency_days, next_due, priority, notes }) => {
+      async ({ name, category, frequency_days, next_due, priority, notes }) => {
         const { rows } = await ctx.query(
           `INSERT INTO maintenance_tasks (name, category, frequency_days, next_due, priority, notes)
            VALUES ($1, $2, $3, $4, $5, $6)
@@ -51,10 +52,11 @@ export const homeMaintenance: ExtensionDefinition = {
           message: `Added maintenance task: ${name}`,
           task: rows[0],
         });
-      })
+      }
     );
 
-    server.tool(
+    registerTool(
+      server,
       'log_maintenance',
       "Log that a maintenance task was completed. Automatically updates task's last_completed and calculates next_due.",
       {
@@ -76,7 +78,7 @@ export const homeMaintenance: ExtensionDefinition = {
           .optional()
           .describe('Recommendations from the tech/contractor for next time'),
       },
-      withErrorHandler(async ({ task_id, completed_at, performed_by, cost, notes, next_action }) => {
+      async ({ task_id, completed_at, performed_by, cost, notes, next_action }) => {
         // Insert the maintenance log
         // The database trigger will automatically update the parent task's last_completed and next_due
         const { rows: logRows } = await ctx.query(
@@ -105,16 +107,17 @@ export const homeMaintenance: ExtensionDefinition = {
           log: logRows[0],
           updated_task: taskRows[0] ?? null,
         });
-      })
+      }
     );
 
-    server.tool(
+    registerTool(
+      server,
       'get_upcoming_maintenance',
       'List maintenance tasks due in the next N days',
       {
         days_ahead: z.number().optional().describe('Number of days to look ahead (default 30)'),
       },
-      withErrorHandler(async ({ days_ahead }) => {
+      async ({ days_ahead }) => {
         const daysAhead = days_ahead ?? 30;
 
         const cutoffDate = new Date();
@@ -133,10 +136,11 @@ export const homeMaintenance: ExtensionDefinition = {
           count: rows.length,
           tasks: rows,
         });
-      })
+      }
     );
 
-    server.tool(
+    registerTool(
+      server,
       'search_maintenance_history',
       'Search maintenance logs by task name, category, or date range',
       {
@@ -145,7 +149,7 @@ export const homeMaintenance: ExtensionDefinition = {
         date_from: z.string().optional().describe('Start date for filtering (ISO 8601 date string)'),
         date_to: z.string().optional().describe('End date for filtering (ISO 8601 date string)'),
       },
-      withErrorHandler(async ({ task_name, category, date_from, date_to }) => {
+      async ({ task_name, category, date_from, date_to }) => {
         // If filtering by task name or category, first find matching task IDs
         let taskIds: string[] | null = null;
 
@@ -217,7 +221,7 @@ export const homeMaintenance: ExtensionDefinition = {
           count: rows.length,
           logs: rows,
         });
-      })
+      }
     );
   },
 };

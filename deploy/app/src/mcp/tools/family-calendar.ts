@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import type { ExtensionDefinition } from '../tool-context.js';
-import { withErrorHandler, jsonResult } from './tool-helpers.js';
+import { registerTool, jsonResult } from './tool-helpers.js';
 
 export const familyCalendar: ExtensionDefinition = {
   name: 'family-calendar',
   requiredTables: ['family_members', 'activities', 'important_dates'],
   register(server, ctx) {
-    server.tool(
+    registerTool(
+      server,
       'add_family_member',
       'Add a person to your household roster',
       {
@@ -18,7 +19,7 @@ export const familyCalendar: ExtensionDefinition = {
         birth_date: z.string().optional().describe('Birth date (YYYY-MM-DD format)'),
         notes: z.string().optional().describe('Additional notes'),
       },
-      withErrorHandler(async (args) => {
+      async (args) => {
         const { rows } = await ctx.query(
           `INSERT INTO family_members (name, relationship, birth_date, notes)
            VALUES ($1, $2, $3, $4)
@@ -27,10 +28,11 @@ export const familyCalendar: ExtensionDefinition = {
         );
 
         return jsonResult(rows[0]);
-      })
+      }
     );
 
-    server.tool(
+    registerTool(
+      server,
       'add_activity',
       'Schedule an activity or recurring event',
       {
@@ -57,7 +59,7 @@ export const familyCalendar: ExtensionDefinition = {
         location: z.string().optional().describe('Location'),
         notes: z.string().optional().describe('Additional notes'),
       },
-      withErrorHandler(async (args) => {
+      async (args) => {
         const { rows } = await ctx.query(
           `INSERT INTO activities (family_member_id, title, activity_type, day_of_week, start_time, end_time, start_date, end_date, location, notes)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -77,10 +79,11 @@ export const familyCalendar: ExtensionDefinition = {
         );
 
         return jsonResult(rows[0]);
-      })
+      }
     );
 
-    server.tool(
+    registerTool(
+      server,
       'get_week_schedule',
       'Get all activities for a given week, grouped by day',
       {
@@ -90,7 +93,7 @@ export const familyCalendar: ExtensionDefinition = {
           .optional()
           .describe('Optional: filter by family member'),
       },
-      withErrorHandler(async (args) => {
+      async (args) => {
         const weekStart = new Date(args.week_start);
         const weekEnd = new Date(weekStart);
         weekEnd.setDate(weekEnd.getDate() + 7);
@@ -128,10 +131,11 @@ export const familyCalendar: ExtensionDefinition = {
         );
 
         return jsonResult(rows);
-      })
+      }
     );
 
-    server.tool(
+    registerTool(
+      server,
       'search_activities',
       'Search activities by title, type, or family member name',
       {
@@ -142,7 +146,7 @@ export const familyCalendar: ExtensionDefinition = {
           .optional()
           .describe('Optional: filter by family member'),
       },
-      withErrorHandler(async (args) => {
+      async (args) => {
         const conditions: string[] = [];
         const params: unknown[] = [];
         let idx = 0;
@@ -177,10 +181,11 @@ export const familyCalendar: ExtensionDefinition = {
         );
 
         return jsonResult(rows);
-      })
+      }
     );
 
-    server.tool(
+    registerTool(
+      server,
       'add_important_date',
       'Add a date to remember (birthday, anniversary, deadline)',
       {
@@ -197,7 +202,7 @@ export const familyCalendar: ExtensionDefinition = {
           .describe('Days before to remind (default 7)'),
         notes: z.string().optional().describe('Additional notes'),
       },
-      withErrorHandler(async (args) => {
+      async (args) => {
         const { rows } = await ctx.query(
           `INSERT INTO important_dates (family_member_id, title, date_value, recurring_yearly, reminder_days_before, notes)
            VALUES ($1, $2, $3, $4, $5, $6)
@@ -213,16 +218,17 @@ export const familyCalendar: ExtensionDefinition = {
         );
 
         return jsonResult(rows[0]);
-      })
+      }
     );
 
-    server.tool(
+    registerTool(
+      server,
       'get_upcoming_dates',
       'Get important dates in the next N days',
       {
         days_ahead: z.number().optional().describe('How many days to look ahead (default 30)'),
       },
-      withErrorHandler(async (args) => {
+      async (args) => {
         const daysAhead = args.days_ahead ?? 30;
         const today = new Date();
         const futureDate = new Date();
@@ -241,7 +247,7 @@ export const familyCalendar: ExtensionDefinition = {
         );
 
         return jsonResult(rows);
-      })
+      }
     );
   },
 };

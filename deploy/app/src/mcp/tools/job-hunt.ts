@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import type { ExtensionDefinition } from '../tool-context.js';
-import { withErrorHandler, jsonResult, textResult, errorResult } from './tool-helpers.js';
+import { registerTool, jsonResult, textResult, errorResult } from './tool-helpers.js';
 
 export const jobHunt: ExtensionDefinition = {
   name: 'job-hunt',
   requiredTables: ['companies', 'job_postings', 'applications', 'interviews', 'job_contacts'],
   register(server, ctx) {
-    server.tool(
+    registerTool(
+      server,
       'add_company',
       'Add a target company to your job search tracker',
       {
@@ -19,7 +20,7 @@ export const jobHunt: ExtensionDefinition = {
         notes: z.string().optional().describe('Notes about the company'),
         glassdoor_rating: z.number().optional().describe('Glassdoor rating (1.0-5.0)'),
       },
-      withErrorHandler(async (args) => {
+      async (args) => {
         const { rows } = await ctx.query(
           `INSERT INTO companies
              (name, industry, website, size, location, remote_policy, notes, glassdoor_rating)
@@ -37,10 +38,11 @@ export const jobHunt: ExtensionDefinition = {
           ],
         );
         return jsonResult(rows[0]);
-      }),
+      },
     );
 
-    server.tool(
+    registerTool(
+      server,
       'add_job_posting',
       'Add a job posting at a tracked company',
       {
@@ -58,7 +60,7 @@ export const jobHunt: ExtensionDefinition = {
           .describe('Where you found the posting'),
         notes: z.string().optional().describe('Notes'),
       },
-      withErrorHandler(async (args) => {
+      async (args) => {
         const { rows } = await ctx.query(
           `INSERT INTO job_postings
              (company_id, title, url, salary_min, salary_max, salary_currency,
@@ -79,10 +81,11 @@ export const jobHunt: ExtensionDefinition = {
           ],
         );
         return jsonResult(rows[0]);
-      }),
+      },
     );
 
-    server.tool(
+    registerTool(
+      server,
       'track_application',
       'Create or update a job application',
       {
@@ -98,7 +101,7 @@ export const jobHunt: ExtensionDefinition = {
         referral_contact: z.string().optional().describe('Name of referral contact'),
         notes: z.string().optional().describe('Additional notes'),
       },
-      withErrorHandler(async (args) => {
+      async (args) => {
         if (args.id) {
           const setClauses: string[] = ['updated_at = now()'];
           const values: unknown[] = [];
@@ -143,10 +146,11 @@ export const jobHunt: ExtensionDefinition = {
           ],
         );
         return jsonResult(rows[0]);
-      }),
+      },
     );
 
-    server.tool(
+    registerTool(
+      server,
       'schedule_interview',
       'Add an interview to an application',
       {
@@ -160,7 +164,7 @@ export const jobHunt: ExtensionDefinition = {
         interviewer_title: z.string().optional().describe('Title of the interviewer'),
         notes: z.string().optional().describe('Preparation notes or questions'),
       },
-      withErrorHandler(async (args) => {
+      async (args) => {
         const { rows } = await ctx.query(
           `INSERT INTO interviews
              (application_id, interview_type, scheduled_at, duration_minutes,
@@ -178,14 +182,15 @@ export const jobHunt: ExtensionDefinition = {
           ],
         );
         return jsonResult(rows[0]);
-      }),
+      },
     );
 
-    server.tool(
+    registerTool(
+      server,
       'job_search_dashboard',
       'Get an overview of your entire job search: pipeline stats, upcoming interviews, recent activity',
       {},
-      withErrorHandler(async () => {
+      async () => {
         const [pipeline, upcoming, recent] = await Promise.all([
           ctx.query(
             `SELECT status, count(*) AS count
@@ -220,10 +225,11 @@ export const jobHunt: ExtensionDefinition = {
           upcoming_interviews: upcoming.rows,
           recent_applications: recent.rows,
         });
-      }),
+      },
     );
 
-    server.tool(
+    registerTool(
+      server,
       'add_job_contact',
       'Add a contact related to your job search (recruiter, hiring manager, referral)',
       {
@@ -239,7 +245,7 @@ export const jobHunt: ExtensionDefinition = {
           .describe('Their role in your process'),
         notes: z.string().optional().describe('Notes'),
       },
-      withErrorHandler(async (args) => {
+      async (args) => {
         const { rows } = await ctx.query(
           `INSERT INTO job_contacts
              (company_id, name, title, email, phone, linkedin_url, role_in_process, notes)
@@ -257,10 +263,11 @@ export const jobHunt: ExtensionDefinition = {
           ],
         );
         return jsonResult(rows[0]);
-      }),
+      },
     );
 
-    server.tool(
+    registerTool(
+      server,
       'search_job_contacts',
       'Search job contacts with optional filters by company, role-in-process, or linkage status',
       {
@@ -272,7 +279,7 @@ export const jobHunt: ExtensionDefinition = {
           .describe('Filter by role'),
         only_unlinked: z.boolean().optional().describe('If true, only return contacts not yet linked to Professional CRM'),
       },
-      withErrorHandler(async ({ query, company_id, role_in_process, only_unlinked }) => {
+      async ({ query, company_id, role_in_process, only_unlinked }) => {
         const conditions: string[] = [];
         const values: unknown[] = [];
         let idx = 1;
@@ -307,16 +314,17 @@ export const jobHunt: ExtensionDefinition = {
           values,
         );
         return jsonResult({ count: rows.length, contacts: rows });
-      }),
+      },
     );
 
-    server.tool(
+    registerTool(
+      server,
       'link_contact_to_professional_crm',
       'CROSS-EXTENSION: create a Professional CRM contact from a job contact and remember the link',
       {
         job_contact_id: z.string().describe('Job contact UUID'),
       },
-      withErrorHandler(async ({ job_contact_id }) => {
+      async ({ job_contact_id }) => {
         const { rows: jcRows } = await ctx.query(
           `SELECT jc.*, c.name AS company_name
              FROM job_contacts jc
@@ -368,7 +376,7 @@ export const jobHunt: ExtensionDefinition = {
           job_contact: updatedRows[0],
           professional_contact: professionalContact,
         });
-      }),
+      },
     );
   },
 };

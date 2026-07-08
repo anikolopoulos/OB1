@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import type { ExtensionDefinition } from '../tool-context.js';
-import { withErrorHandler, jsonResult, textResult, errorResult } from './tool-helpers.js';
+import { registerTool, jsonResult, textResult, errorResult } from './tool-helpers.js';
 
 export const professionalCrm: ExtensionDefinition = {
   name: 'professional-crm',
   requiredTables: ['professional_contacts', 'contact_interactions', 'opportunities'],
   register(server, ctx) {
-    server.tool(
+    registerTool(
+      server,
       'add_contact',
       'Add a professional contact to your CRM',
       {
@@ -20,7 +21,7 @@ export const professionalCrm: ExtensionDefinition = {
         tags: z.array(z.string()).optional().describe('Tags for categorization'),
         notes: z.string().optional().describe('Additional notes'),
       },
-      withErrorHandler(async (args) => {
+      async (args) => {
         const { rows } = await ctx.query(
           `INSERT INTO professional_contacts
              (name, company, title, email, phone, linkedin_url, how_we_met, tags, notes)
@@ -39,10 +40,11 @@ export const professionalCrm: ExtensionDefinition = {
           ],
         );
         return jsonResult(rows[0]);
-      }),
+      },
     );
 
-    server.tool(
+    registerTool(
+      server,
       'update_contact',
       "Update an existing contact's details — only the fields you provide are changed",
       {
@@ -62,7 +64,7 @@ export const professionalCrm: ExtensionDefinition = {
           .optional()
           .describe('Set follow-up date (YYYY-MM-DD), or null to clear'),
       },
-      withErrorHandler(async (args) => {
+      async (args) => {
         const setClauses: string[] = ['updated_at = now()'];
         const values: unknown[] = [];
         let idx = 1;
@@ -79,9 +81,9 @@ export const professionalCrm: ExtensionDefinition = {
         if (args.follow_up_date !== undefined) { setClauses.push(`follow_up_date = $${idx++}`); values.push(args.follow_up_date); }
 
         if (setClauses.length <= 1) {
-          // errorResult (not textResult): unknown keys are stripped by zod
-          // before the handler runs, so a fully typo'd request lands here —
-          // it must not read as success to the calling model.
+          // Reachable only when the request contains just contact_id (typo'd
+          // keys are rejected by the strict schema before the handler runs) —
+          // still an error, not a success, for the calling model.
           return errorResult(
             'No updatable fields provided. Accepted fields: name, company, title, email, phone, linkedin_url, how_we_met, tags, notes, follow_up_date',
           );
@@ -98,10 +100,11 @@ export const professionalCrm: ExtensionDefinition = {
         }
 
         return jsonResult({ message: `Updated contact: ${rows[0].name}`, contact: rows[0] });
-      }, 'update_contact'),
+      },
     );
 
-    server.tool(
+    registerTool(
+      server,
       'search_contacts',
       'Search professional contacts. Uses PostgreSQL full-text search with ts_rank ordering; falls back to ILIKE if the FTS RPC is unavailable. Optional tag filter.',
       {
@@ -109,7 +112,7 @@ export const professionalCrm: ExtensionDefinition = {
         tags: z.array(z.string()).optional().describe('Filter by specific tags (array contains)'),
         limit: z.number().optional().default(20).describe('Max results'),
       },
-      withErrorHandler(async ({ query, tags, limit }) => {
+      async ({ query, tags, limit }) => {
         if (query && query.trim()) {
           const tsQuery = query.trim().split(/\s+/).join(' & ');
           try {
@@ -142,10 +145,11 @@ export const professionalCrm: ExtensionDefinition = {
           [tags ?? null, limit],
         );
         return jsonResult({ search_mode: 'list', count: rows.length, contacts: rows });
-      }),
+      },
     );
 
-    server.tool(
+    registerTool(
+      server,
       'log_interaction',
       'Log an interaction with a professional contact',
       {
@@ -157,7 +161,7 @@ export const professionalCrm: ExtensionDefinition = {
         follow_up_needed: z.boolean().optional().default(false).describe('Whether follow-up is needed'),
         follow_up_notes: z.string().optional().describe('Notes about follow-up'),
       },
-      withErrorHandler(async (args) => {
+      async (args) => {
         const { rows } = await ctx.query(
           `INSERT INTO contact_interactions
              (contact_id, interaction_type, summary, follow_up_needed, follow_up_notes)
@@ -172,10 +176,11 @@ export const professionalCrm: ExtensionDefinition = {
           ],
         );
         return jsonResult(rows[0]);
-      }),
+      },
     );
 
-    server.tool(
+    registerTool(
+      server,
       'list_follow_ups',
       'List contacts with pending follow-ups or those not contacted recently',
       {
@@ -185,7 +190,7 @@ export const professionalCrm: ExtensionDefinition = {
           .default(30)
           .describe('Show contacts not contacted in this many days'),
       },
-      withErrorHandler(async ({ days_stale }) => {
+      async ({ days_stale }) => {
         const { rows } = await ctx.query(
           `SELECT * FROM professional_contacts
             WHERE follow_up_date IS NOT NULL
@@ -196,10 +201,11 @@ export const professionalCrm: ExtensionDefinition = {
           [days_stale],
         );
         return jsonResult(rows);
-      }),
+      },
     );
 
-    server.tool(
+    registerTool(
+      server,
       'manage_opportunity',
       'Create or update a business/career opportunity linked to a contact',
       {
@@ -215,7 +221,7 @@ export const professionalCrm: ExtensionDefinition = {
         expected_close_date: z.string().optional().describe('Expected close date (YYYY-MM-DD)'),
         notes: z.string().optional().describe('Additional notes'),
       },
-      withErrorHandler(async (args) => {
+      async (args) => {
         if (args.id) {
           const setClauses: string[] = ['updated_at = now()'];
           const values: unknown[] = [];
@@ -256,17 +262,18 @@ export const professionalCrm: ExtensionDefinition = {
           ],
         );
         return jsonResult(rows[0]);
-      }),
+      },
     );
 
-    server.tool(
+    registerTool(
+      server,
       'link_thought',
       'CROSS-EXTENSION: append a thought from core Open Brain into a contact\'s notes',
       {
         thought_id: z.string().describe('Thought UUID from the brain\'s thoughts table'),
         contact_id: z.string().describe('Contact UUID'),
       },
-      withErrorHandler(async ({ thought_id, contact_id }) => {
+      async ({ thought_id, contact_id }) => {
         const { rows: thoughtRows } = await ctx.query(
           `SELECT content FROM thoughts WHERE id = $1`,
           [thought_id],
@@ -288,17 +295,18 @@ export const professionalCrm: ExtensionDefinition = {
           [newNotes, contact_id],
         );
         return jsonResult({ message: `Linked thought to ${rows[0].name}`, contact: rows[0] });
-      }),
+      },
     );
 
-    server.tool(
+    registerTool(
+      server,
       'prep_context',
       'Meeting prep: full contact profile + recent interactions + open opportunities + pending follow-ups',
       {
         contact_id: z.string().describe('Contact UUID'),
         interaction_limit: z.number().optional().default(10).describe('Max interactions to include'),
       },
-      withErrorHandler(async ({ contact_id, interaction_limit }) => {
+      async ({ contact_id, interaction_limit }) => {
         const [contactRes, interactionsRes, opportunitiesRes] = await Promise.all([
           ctx.query(`SELECT * FROM professional_contacts WHERE id = $1`, [contact_id]),
           ctx.query(
@@ -371,17 +379,18 @@ export const professionalCrm: ExtensionDefinition = {
             },
           },
         });
-      }),
+      },
     );
 
-    server.tool(
+    registerTool(
+      server,
       'stale_contacts',
       'Find contacts going cold — no interaction logged in the past N days, ordered by staleness',
       {
         days_threshold: z.number().optional().default(30).describe('Days without contact to consider stale'),
         limit: z.number().optional().default(20).describe('Max results'),
       },
-      withErrorHandler(async ({ days_threshold, limit }) => {
+      async ({ days_threshold, limit }) => {
         const { rows } = await ctx.query(
           `SELECT id, name, company, title, tags, last_contacted, follow_up_date
              FROM professional_contacts
@@ -404,7 +413,7 @@ export const professionalCrm: ExtensionDefinition = {
           count: contacts.length,
           stale_contacts: contacts,
         });
-      }),
+      },
     );
   },
 };

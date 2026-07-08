@@ -1,10 +1,11 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { ToolContext } from '../tool-context.js';
-import { withErrorHandler, textResult, errorResult } from './tool-helpers.js';
+import { registerTool, withErrorHandler, textResult, errorResult } from './tool-helpers.js';
 
 export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
-  server.tool(
+  registerTool(
+    server,
     'search_thoughts',
     'Search captured thoughts by meaning. Use this when the user asks about a topic, person, or idea they\'ve previously captured.',
     {
@@ -12,7 +13,7 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
       limit: z.number().optional().default(10),
       threshold: z.number().optional().default(0.5),
     },
-    withErrorHandler(async ({ query, limit, threshold }) => {
+    async ({ query, limit, threshold }) => {
       const qEmb = await ctx.getEmbedding(query);
 
       const { rows: data } = await ctx.query(
@@ -54,10 +55,11 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
       );
 
       return textResult(`Found ${data.length} thought(s):\n\n${results.join('\n\n')}`);
-    })
+    }
   );
 
-  server.tool(
+  registerTool(
+    server,
     'list_thoughts',
     'List recently captured thoughts with optional filters by type, topic, person, or time range.',
     {
@@ -70,7 +72,7 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
       person: z.string().optional().describe('Filter by person mentioned'),
       days: z.number().optional().describe('Only thoughts from the last N days'),
     },
-    withErrorHandler(async ({ limit, type, topic, person, days }) => {
+    async ({ limit, type, topic, person, days }) => {
       const conditions: string[] = [];
       const params: unknown[] = [];
       let paramIdx = 0;
@@ -127,14 +129,15 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
       );
 
       return textResult(`${data.length} recent thought(s):\n\n${results.join('\n\n')}`);
-    })
+    }
   );
 
-  server.tool(
+  registerTool(
+    server,
     'thought_stats',
     'Get a summary of all captured thoughts: totals, types, top topics, and people.',
     {},
-    withErrorHandler(async () => {
+    async () => {
       const { rows: countRows } = await ctx.query('SELECT count(*) FROM thoughts');
       const count = parseInt(countRows[0].count, 10);
 
@@ -185,10 +188,11 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
       }
 
       return textResult(lines.join('\n'));
-    })
+    }
   );
 
-  server.tool(
+  registerTool(
+    server,
     'capture_thought',
     [
       'Save a new thought to the Open Brain. Generates an embedding and extracts metadata automatically. Use when the user wants to save something to their brain: notes, insights, decisions, observations, or migrated content.',
@@ -212,7 +216,7 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
           'The thought to capture — one atomic idea, written so it stands alone when retrieved later with no sibling context'
         ),
     },
-    withErrorHandler(async ({ content }) => {
+    async ({ content }) => {
       const [embedding, metadata] = await Promise.all([
         ctx.getEmbedding(content),
         ctx.extractMetadata(content),
@@ -243,7 +247,7 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
       const confirmation = parts.join(' — ');
 
       return textResult(confirmation);
-    })
+    }
   );
 
   // ── update_thought ───────────────────────────────────────────────────────────
@@ -269,15 +273,17 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
         '',
         '`new_content` must be the complete final text of the thought after editing — not a diff, patch, or instruction. Updating re-embeds the thought and re-extracts its metadata.',
       ].join('\n'),
-      inputSchema: {
-        id: z.string().uuid().describe('UUID of the thought to update (from search_thoughts or list_thoughts)'),
-        new_content: z.string().min(1).describe('Complete final text of the thought after editing — never a diff or instruction'),
-        confirm: z
-          .boolean()
-          .optional()
-          .default(false)
-          .describe('Set to true ONLY after the user has explicitly approved the preview returned from a prior call with the same id and new_content'),
-      },
+      inputSchema: z
+        .object({
+          id: z.string().uuid().describe('UUID of the thought to update (from search_thoughts or list_thoughts)'),
+          new_content: z.string().min(1).describe('Complete final text of the thought after editing — never a diff or instruction'),
+          confirm: z
+            .boolean()
+            .optional()
+            .default(false)
+            .describe('Set to true ONLY after the user has explicitly approved the preview returned from a prior call with the same id and new_content'),
+        })
+        .strict(),
       annotations: {
         title: 'Update Thought',
         readOnlyHint: false,
@@ -353,7 +359,7 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
           indent(new_content),
         ].join('\n')
       );
-    })
+    }, 'update_thought')
   );
 
   // ── delete_thought ───────────────────────────────────────────────────────────
@@ -377,14 +383,16 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
         '',
         'Every deletion requires the user to say "yes" for that specific thought. There is no "approve all" or bulk mode. If the user is deleting many thoughts in one session, each one still goes through this flow individually — one id, one preview, one confirmation, one delete.',
       ].join('\n'),
-      inputSchema: {
-        id: z.string().uuid().describe('UUID of the thought to delete (from search_thoughts or list_thoughts)'),
-        confirm: z
-          .boolean()
-          .optional()
-          .default(false)
-          .describe('Set to true ONLY after the user has explicitly approved the preview returned from a prior call with the same id'),
-      },
+      inputSchema: z
+        .object({
+          id: z.string().uuid().describe('UUID of the thought to delete (from search_thoughts or list_thoughts)'),
+          confirm: z
+            .boolean()
+            .optional()
+            .default(false)
+            .describe('Set to true ONLY after the user has explicitly approved the preview returned from a prior call with the same id'),
+        })
+        .strict(),
       annotations: {
         title: 'Delete Thought',
         readOnlyHint: false,
@@ -426,7 +434,7 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
           '(This echo is your only record of the deleted thought — recapture via capture_thought if needed.)',
         ].join('\n')
       );
-    })
+    }, 'delete_thought')
   );
 }
 

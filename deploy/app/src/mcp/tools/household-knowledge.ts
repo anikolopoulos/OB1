@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import type { ExtensionDefinition } from '../tool-context.js';
-import { withErrorHandler, jsonResult } from './tool-helpers.js';
+import { registerTool, jsonResult } from './tool-helpers.js';
 
 export const householdKnowledge: ExtensionDefinition = {
   name: 'household-knowledge',
   requiredTables: ['household_items', 'household_vendors'],
   register(server, ctx) {
-    server.tool(
+    registerTool(
+      server,
       'add_household_item',
       'Add a new household item (paint color, appliance, measurement, document, etc.)',
       {
@@ -27,7 +28,7 @@ export const householdKnowledge: ExtensionDefinition = {
           ),
         notes: z.string().optional().describe('Additional notes or context'),
       },
-      withErrorHandler(async ({ name, category, location, details, notes }) => {
+      async ({ name, category, location, details, notes }) => {
         const { rows } = await ctx.query(
           `INSERT INTO household_items (name, category, location, details, notes)
            VALUES ($1, $2, $3, $4::jsonb, $5)
@@ -40,10 +41,11 @@ export const householdKnowledge: ExtensionDefinition = {
           message: `Added household item: ${name}`,
           item: rows[0],
         });
-      })
+      }
     );
 
-    server.tool(
+    registerTool(
+      server,
       'search_household_items',
       'Search household items by name, category, or location',
       {
@@ -54,7 +56,7 @@ export const householdKnowledge: ExtensionDefinition = {
         category: z.string().optional().describe('Filter by specific category'),
         location: z.string().optional().describe('Filter by specific location'),
       },
-      withErrorHandler(async ({ query, category, location }) => {
+      async ({ query, category, location }) => {
         const conditions: string[] = [];
         const params: unknown[] = [];
         let idx = 0;
@@ -90,16 +92,17 @@ export const householdKnowledge: ExtensionDefinition = {
           count: rows.length,
           items: rows,
         });
-      })
+      }
     );
 
-    server.tool(
+    registerTool(
+      server,
       'get_item_details',
       'Get full details of a specific household item by ID',
       {
         item_id: z.string().describe('Item ID (UUID)'),
       },
-      withErrorHandler(async ({ item_id }) => {
+      async ({ item_id }) => {
         const { rows } = await ctx.query(
           'SELECT * FROM household_items WHERE id = $1',
           [item_id]
@@ -113,10 +116,11 @@ export const householdKnowledge: ExtensionDefinition = {
           success: true,
           item: rows[0],
         });
-      })
+      }
     );
 
-    server.tool(
+    registerTool(
+      server,
       'add_vendor',
       'Add a service provider (plumber, electrician, landscaper, etc.)',
       {
@@ -132,7 +136,7 @@ export const householdKnowledge: ExtensionDefinition = {
         rating: z.number().min(1).max(5).optional().describe('Rating from 1-5'),
         last_used: z.string().optional().describe('Date last used (YYYY-MM-DD format)'),
       },
-      withErrorHandler(async ({ name, service_type, phone, email, website, notes, rating, last_used }) => {
+      async ({ name, service_type, phone, email, website, notes, rating, last_used }) => {
         const { rows } = await ctx.query(
           `INSERT INTO household_vendors (name, service_type, phone, email, website, notes, rating, last_used)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -154,10 +158,11 @@ export const householdKnowledge: ExtensionDefinition = {
           message: `Added vendor: ${name}`,
           vendor: rows[0],
         });
-      })
+      }
     );
 
-    server.tool(
+    registerTool(
+      server,
       'list_vendors',
       'List service providers, optionally filtered by service type',
       {
@@ -166,7 +171,7 @@ export const householdKnowledge: ExtensionDefinition = {
           .optional()
           .describe("Filter by service type (e.g. 'plumber', 'electrician')"),
       },
-      withErrorHandler(async ({ service_type }) => {
+      async ({ service_type }) => {
         let sql = 'SELECT * FROM household_vendors';
         const params: unknown[] = [];
 
@@ -184,7 +189,7 @@ export const householdKnowledge: ExtensionDefinition = {
           count: rows.length,
           vendors: rows,
         });
-      })
+      }
     );
   },
 };

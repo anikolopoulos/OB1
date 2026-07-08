@@ -5,6 +5,9 @@
  * tool definition can focus on its business logic rather than boilerplate.
  */
 
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
+
 /** The shape every MCP tool handler must return (compatible with the MCP SDK). */
 export interface ToolResult {
   [key: string]: unknown;
@@ -53,4 +56,36 @@ export function errorResult(message: string): ToolResult {
     content: [{ type: 'text' as const, text: `Error: ${message}` }],
     isError: true,
   };
+}
+
+/**
+ * Registers an MCP tool with a STRICT input schema, so that unknown/typo'd
+ * argument keys are rejected with a validation error instead of being
+ * silently stripped (which is what the legacy `server.tool()` raw-shape
+ * overload does).
+ *
+ * This is the single registration path for MCP tools in this codebase —
+ * every tool with input arguments should be registered via this helper.
+ * Tools that need annotations (e.g. destructiveHint) beyond a plain
+ * description should call `server.registerTool` directly using the same
+ * `z.object(shape).strict()` pattern.
+ *
+ * The tool name is threaded into `withErrorHandler` so every tool gets
+ * consistent log attribution on unhandled errors.
+ */
+export function registerTool<Shape extends z.ZodRawShape>(
+  server: McpServer,
+  name: string,
+  description: string,
+  shape: Shape,
+  handler: (args: z.infer<z.ZodObject<Shape>>, extra: unknown) => Promise<ToolResult>,
+): void {
+  server.registerTool(
+    name,
+    {
+      description,
+      inputSchema: z.object(shape).strict(),
+    },
+    withErrorHandler(handler, name),
+  );
 }
