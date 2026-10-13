@@ -284,6 +284,7 @@ function filterActivities(activities, category) {
 // to plain text so day summaries can see both sides of the exchange.
 
 const ANSWER_MAX_CHARS = 1000;
+const GEMINI_ANSWER_SEP = "\n   Gemini's answer: ";
 
 const HTML_ENTITIES = {
   "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'", "&nbsp;": " ",
@@ -327,7 +328,7 @@ function groupByDay(activities) {
     let entry = typeof a.title === "string" ? a.title : String(a.title || "");
     // Only Gemini Apps records have safeHtmlItem; no-op for other categories.
     const answer = extractGeminiAnswer(a);
-    if (answer) entry += `\n   Gemini's answer: ${answer}`;
+    if (answer) entry += `${GEMINI_ANSWER_SEP}${answer}`;
     byDay[day].push(entry);
   }
   return byDay;
@@ -553,7 +554,9 @@ async function main() {
 
       // Check sync log (dedup by category+day)
       const dayKey = `${category.toLowerCase()}:${day}`;
-      const dayHash = hashText(entries.join("\n"));
+      // Hash titles only: v1.0 sync logs hashed titles, so including the v1.1
+      // Gemini answers would re-summarise (and duplicate) every logged day.
+      const dayHash = hashText(entries.map(e => e.split(GEMINI_ANSWER_SEP)[0]).join("\n"));
       if (syncLog.ingested_days[dayKey] === dayHash) {
         skippedDays++;
         continue;
