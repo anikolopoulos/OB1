@@ -254,7 +254,11 @@ rsync -avz --delete deploy/db/ ailab-root:/opt/ai-lab/openbrain/db/
 # 3. If SQL schema changed: apply migration manually to existing schemas
 #    (init scripts only run on first boot — existing brains need manual ALTER/CREATE)
 #    Migrations for existing brains live in deploy/db/migrations/ (idempotent).
-ssh ailab-root "docker exec -i postgres psql -v ON_ERROR_STOP=1 -U openbrain -d openbrain" < deploy/db/migrations/<file>.sql
+#    Run them as `ailab`, the owner of every brain schema and of brain_template:
+#    the app's `openbrain` role cannot create objects in brain_template, so a
+#    migration run as openbrain fails there and rolls back (2026-10-13).
+#    Back up first: docker exec postgres pg_dump -U openbrain -d openbrain -Fc
+ssh ailab-root "docker exec -i postgres psql -v ON_ERROR_STOP=1 -U ailab -d openbrain" < deploy/db/migrations/<file>.sql
 
 # 4. Rebuild and restart
 ssh ailab-root "cd /opt/ai-lab && docker compose build openbrain && docker compose up -d openbrain"
