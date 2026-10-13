@@ -233,7 +233,7 @@ curl https://<domain>/health
 
 ### View logs (on the server)
 ```bash
-docker compose logs -f app        # App logs
+docker compose logs -f openbrain  # App logs (service is `app` in deploy/docker-compose.yml)
 docker compose logs -f postgres   # Database logs
 ```
 
@@ -253,7 +253,8 @@ rsync -avz --delete deploy/db/ ailab-root:/opt/ai-lab/openbrain/db/
 
 # 3. If SQL schema changed: apply migration manually to existing schemas
 #    (init scripts only run on first boot — existing brains need manual ALTER/CREATE)
-ssh ailab-root "docker exec -i postgres psql -U openbrain -d openbrain" < migration.sql
+#    Migrations for existing brains live in deploy/db/migrations/ (idempotent).
+ssh ailab-root "docker exec -i postgres psql -v ON_ERROR_STOP=1 -U openbrain -d openbrain" < deploy/db/migrations/<file>.sql
 
 # 4. Rebuild and restart
 ssh ailab-root "cd /opt/ai-lab && docker compose build openbrain && docker compose up -d openbrain"
