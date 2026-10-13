@@ -3,6 +3,41 @@ import { z } from 'zod';
 import type { ToolContext } from '../tool-context.js';
 import { registerTool, withErrorHandler, textResult, errorResult } from './tool-helpers.js';
 
+// metadata_patch guard. REST reads cast importance/quality_score to int and
+// status_updated_at to timestamptz, stats unnests topics, and search filters on
+// sensitivity_tier, so a badly typed value would break those reads for the whole
+// brain. source and slack_ts drive the Slack dedup index and must not be edited.
+const PATCH_MAX_BYTES = 16_384;
+const PATCH_MAX_KEYS = 50;
+const PATCH_FORBIDDEN_KEYS = ['source', 'slack_ts'];
+const patchReservedKeys = z
+  .object({
+    importance: z.number().int().min(1).max(10),
+    quality_score: z.number().int().min(0).max(100),
+    status_updated_at: z.string().datetime({ offset: true }),
+    topics: z.array(z.string()),
+    people: z.array(z.string()),
+    action_items: z.array(z.string()),
+    type: z.string().min(1),
+    status: z.string().nullable(),
+    sensitivity_tier: z.enum(['standard', 'personal', 'restricted']),
+  })
+  .partial();
+
+function validateMetadataPatch(patch: Record<string, unknown>): string | null {
+  const forbidden = PATCH_FORBIDDEN_KEYS.filter((k) => k in patch);
+  if (forbidden.length) return `metadata_patch cannot change: ${forbidden.join(', ')}`;
+  if (Object.keys(patch).length > PATCH_MAX_KEYS) return `metadata_patch may set at most ${PATCH_MAX_KEYS} keys`;
+  const json = JSON.stringify(patch);
+  if (Buffer.byteLength(json) > PATCH_MAX_BYTES) return `metadata_patch must be at most ${PATCH_MAX_BYTES} bytes as JSON`;
+  if (json.includes('\\u0000')) return 'metadata_patch must not contain NUL characters';
+  const parsed = patchReservedKeys.safeParse(patch);
+  if (!parsed.success) {
+    return 'Invalid metadata_patch: ' + parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
+  }
+  return null;
+}
+
 export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
   registerTool(
     server,
@@ -258,7 +293,7 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
       description: [
         'Update the content and/or metadata of an existing thought, identified by the `id` returned from `search_thoughts` or `list_thoughts`.',
         '',
-        'Metadata-only edits (tags, status, review flags, cross-references): pass `metadata_patch` without `new_content`. It is shallow-merged into the existing metadata — keys you do not mention are left unchanged. No re-embedding and no AI re-extraction, so it is cheap. Never rewrite content just to add a tag.',
+        'Metadata-only edits (tags, status, review flags, cross-references): pass `metadata_patch` without `new_content`. It is shallow-merged into the existing metadata — keys you do not mention are left unchanged. No re-embedding and no AI re-extraction, so it is cheap. Never rewrite content just to add a tag. `source` and `slack_ts` cannot be patched; `importance` is an integer 1-10, `quality_score` an integer 0-100, `topics`/`people`/`action_items` are string arrays, `sensitivity_tier` is standard, personal or restricted. Patching `status` also stamps `status_updated_at`.',
         '',
         'Content edits: use `new_content` ONLY to:',
         '  • fix factual errors',
@@ -309,6 +344,10 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
       if (new_content === undefined && !hasPatch) {
         return errorResult('Provide new_content, a non-empty metadata_patch, or both.');
       }
+      if (hasPatch) {
+        const invalid = validateMetadataPatch(metadata_patch);
+        if (invalid) return errorResult(invalid);
+      }
 
       const { rows: existingRows } = await ctx.query(
         'SELECT id, content, metadata, created_at FROM thoughts WHERE id = $1',
@@ -325,21 +364,29 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
       };
 
       const contentChanges = new_content !== undefined && new_content !== existing.content;
-      const patch = hasPatch ? metadata_patch : undefined;
-
-      if (!confirm) {
-        return textResult(buildUpdatePreview(id, existing, contentChanges ? new_content : undefined, patch));
-      }
+      // Same rule as the REST status edit: a status change records when it happened.
+      const patch = hasPatch
+        ? 'status' in metadata_patch && !('status_updated_at' in metadata_patch)
+          ? { ...metadata_patch, status_updated_at: new Date().toISOString() }
+          : metadata_patch
+        : undefined;
 
       if (!contentChanges && !patch) {
         return textResult(`No change — new_content is identical to the existing content of thought ${id}.`);
       }
 
+      if (!confirm) {
+        return textResult(buildUpdatePreview(id, existing, contentChanges ? new_content : undefined, patch));
+      }
+
       if (!contentChanges) {
-        await ctx.query(
+        const { rowCount } = await ctx.query(
           'UPDATE thoughts SET metadata = metadata || $1::jsonb WHERE id = $2',
           [JSON.stringify(patch), id]
         );
+        if (!rowCount) {
+          return errorResult(`Thought ${id} no longer exists — it was deleted between the preview and this confirmation.`);
+        }
         return textResult(
           [`Updated metadata of thought ${id} (content unchanged, not re-embedded).`, '', 'MERGED KEYS:', indent(JSON.stringify(patch, null, 2))].join('\n')
         );
@@ -356,8 +403,9 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
         ...(patch ?? {}),
       };
 
+      let updated: number | null = 0;
       try {
-        await ctx.query(
+        ({ rowCount: updated } = await ctx.query(
           `UPDATE thoughts
               SET content             = $1,
                   content_fingerprint = encode(
@@ -368,7 +416,7 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
                   metadata            = $3::jsonb
             WHERE id = $4`,
           [new_content, JSON.stringify(embedding), JSON.stringify(mergedMetadata), id]
-        );
+        ));
       } catch (err: unknown) {
         // Match on the key in `detail`: the unique index is named
         // idx_thoughts_fingerprint or thoughts_content_fingerprint_idx by brain.
@@ -379,6 +427,9 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
           );
         }
         throw err;
+      }
+      if (!updated) {
+        return errorResult(`Thought ${id} no longer exists — it was deleted between the preview and this confirmation.`);
       }
 
       return textResult(
