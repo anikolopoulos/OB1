@@ -3,11 +3,24 @@
 -- deploy/db/init/015-fingerprint-trigger.sql) on brain_template and on every
 -- existing brain schema. Init scripts only run on first boot, so existing
 -- databases need this once. Idempotent: safe to run more than once.
--- Adds a function and a trigger only; no rows are changed.
+--
+-- Run with: psql -v ON_ERROR_STOP=1 ... < this file
+--
+-- Locking: CREATE OR REPLACE TRIGGER takes SHARE ROW EXCLUSIVE, which pauses
+-- writes to each thoughts table but not reads. lock_timeout makes the run fail
+-- (and roll back as a whole) instead of queueing behind a long reader such as
+-- pg_dump; re-run it when that reader is done.
+--
+-- Part 2 repairs stale fingerprints (rows whose content was edited through the
+-- REST API before this trigger existed), skipping any row whose corrected
+-- fingerprint is already taken by another row.
+
+SET lock_timeout = '3s';
 
 DO $$
 DECLARE
     s TEXT;
+    repaired BIGINT;
 BEGIN
     FOR s IN
         SELECT 'brain_template'
@@ -19,6 +32,7 @@ BEGIN
             CONTINUE;
         END IF;
 
+        -- Part 1: function + trigger
         EXECUTE format($f$
             CREATE OR REPLACE FUNCTION %I.set_content_fingerprint()
             RETURNS TRIGGER AS $body$
@@ -35,24 +49,60 @@ BEGIN
             $body$ LANGUAGE plpgsql
         $f$, s);
 
-        EXECUTE format('DROP TRIGGER IF EXISTS trg_thoughts_content_fingerprint ON %I.thoughts', s);
         EXECUTE format(
-            'CREATE TRIGGER trg_thoughts_content_fingerprint
+            'CREATE OR REPLACE TRIGGER trg_thoughts_content_fingerprint
                  BEFORE INSERT OR UPDATE ON %I.thoughts
                  FOR EACH ROW
                  EXECUTE FUNCTION %I.set_content_fingerprint()',
             s, s
         );
-        RAISE NOTICE 'installed fingerprint trigger on %', s;
+
+        -- Part 2: repair stale fingerprints. Content is unchanged, so the
+        -- trigger leaves the explicit value alone.
+        EXECUTE format($u$
+            WITH fixed AS (
+                SELECT id, encode(sha256(convert_to(
+                           lower(trim(regexp_replace(content, '\s+', ' ', 'g'))),
+                           'UTF8')), 'hex') AS fp
+                  FROM %I.thoughts
+                 WHERE content_fingerprint IS NOT NULL
+            )
+            UPDATE %I.thoughts t
+               SET content_fingerprint = f.fp
+              FROM fixed f
+             WHERE t.id = f.id
+               AND t.content_fingerprint <> f.fp
+               AND NOT EXISTS (SELECT 1 FROM %I.thoughts o
+                                WHERE o.content_fingerprint = f.fp AND o.id <> t.id)
+        $u$, s, s, s);
+        GET DIAGNOSTICS repaired = ROW_COUNT;
+
+        RAISE NOTICE '%: trigger installed, % stale fingerprint(s) repaired', s, repaired;
     END LOOP;
 END;
 $$;
 
--- Read-only check after running: rows whose stored fingerprint no longer
--- matches their content (edited through the REST API before this trigger).
--- Recomputing them could collide with another row, so review before fixing.
--- Run per brain schema:
+RESET lock_timeout;
+
+-- Read-only checks after running (per brain schema):
 --
--- SELECT count(*) FROM brain_<slug>.thoughts
---  WHERE content_fingerprint IS DISTINCT FROM encode(sha256(convert_to(
---        lower(trim(regexp_replace(content, '\s+', ' ', 'g'))), 'UTF8')), 'hex');
+-- Stale fingerprints left (corrected value collides with another row; review by hand):
+--   SELECT count(*) FROM brain_<slug>.thoughts
+--    WHERE content_fingerprint IS NOT NULL
+--      AND content_fingerprint <> encode(sha256(convert_to(
+--          lower(trim(regexp_replace(content, '\s+', ' ', 'g'))), 'UTF8')), 'hex');
+--
+-- Missing fingerprints (rows from before fingerprinting; see
+-- recipes/fingerprint-dedup-backfill):
+--   SELECT count(*) FROM brain_<slug>.thoughts WHERE content_fingerprint IS NULL;
+--
+-- Rollback (fingerprints the trigger already wrote are correct and can stay):
+--   SET lock_timeout = '3s';
+--   DO $$ DECLARE s text; BEGIN
+--     FOR s IN SELECT 'brain_template' UNION SELECT schema_name FROM management.brains LOOP
+--       IF to_regclass(format('%I.thoughts', s)) IS NOT NULL THEN
+--         EXECUTE format('DROP TRIGGER IF EXISTS trg_thoughts_content_fingerprint ON %I.thoughts', s);
+--         EXECUTE format('DROP FUNCTION IF EXISTS %I.set_content_fingerprint()', s);
+--       END IF;
+--     END LOOP;
+--   END $$;

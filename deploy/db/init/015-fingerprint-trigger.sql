@@ -24,8 +24,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS trg_thoughts_content_fingerprint ON brain_template.thoughts;
-CREATE TRIGGER trg_thoughts_content_fingerprint
+CREATE OR REPLACE TRIGGER trg_thoughts_content_fingerprint
     BEFORE INSERT OR UPDATE ON brain_template.thoughts
     FOR EACH ROW
     EXECUTE FUNCTION brain_template.set_content_fingerprint();
