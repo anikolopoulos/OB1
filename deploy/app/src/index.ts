@@ -37,6 +37,16 @@ async function handleMcp(
   req: http.IncomingMessage,
   res: http.ServerResponse,
 ): Promise<void> {
+  // Stateless transport: there is no standalone SSE stream (GET) or session
+  // to terminate (DELETE). Without this guard a GET is parked on an SSE stream
+  // that never emits or closes, so mcp-remote's GET probe before initialize
+  // hangs and the client handshake times out with no server-side error.
+  if (req.method !== 'POST') {
+    res.writeHead(405, { 'Content-Type': 'application/json', Allow: 'POST' });
+    res.end(JSON.stringify({ error: 'Method not allowed' }));
+    return;
+  }
+
   const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
   const rawHeader = req.headers['x-brain-key'];
   const headerKey = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
