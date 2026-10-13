@@ -370,8 +370,10 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
           [new_content, JSON.stringify(embedding), JSON.stringify(mergedMetadata), id]
         );
       } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (msg.includes('content_fingerprint')) {
+        // Match on the key in `detail`: the unique index is named
+        // idx_thoughts_fingerprint or thoughts_content_fingerprint_idx by brain.
+        const pgErr = err as { code?: string; detail?: string };
+        if (pgErr.code === '23505' && pgErr.detail?.includes('(content_fingerprint)')) {
           return errorResult(
             `Cannot update: another thought already has this exact content. Locate it via search_thoughts and merge or delete one before retrying.`
           );
