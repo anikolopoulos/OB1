@@ -14,7 +14,7 @@ deploy="$(dirname "$here")"
 export SMOKE_PORT="${SMOKE_PORT:-3099}" SMOKE_LLM_PORT="${SMOKE_LLM_PORT:-3098}"
 project="ob1-smoke-$$"
 dc() { docker compose -p "$project" -f "$here/compose.yml" "$@"; }
-trap 'dc down -v --remove-orphans >/dev/null 2>&1' EXIT
+trap 'dc down -v --rmi local --remove-orphans >/dev/null 2>&1' EXIT
 
 base="http://127.0.0.1:$SMOKE_PORT"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -125,7 +125,12 @@ args="{\"id\":\"$id\",\"metadata_patch\":{\"source\":\"x\"}}"
 
 expect_in "cannot change: source" "$(mcp "$key" update_thought "$args")" "forbidden key"
 args="{\"id\":\"$id\",\"metadata_patch\":{\"importance\":\"high\"}}"
-expect_in "importance" "$(mcp "$key" update_thought "$args")" "badly typed key"
+expect_in "Invalid metadata_patch: importance" "$(mcp "$key" update_thought "$args")" "badly typed key, preview"
+args="{\"id\":\"$id\",\"metadata_patch\":{\"importance\":\"high\"},\"confirm\":true}"
+expect_in "Invalid metadata_patch: importance" "$(mcp "$key" update_thought "$args")" "badly typed key, confirm"
+[ "$(sql "SELECT metadata ? 'importance' FROM brain_smoke.thoughts WHERE id = '$id'")" = f ] || fail "badly typed value was stored"
+args="{\"id\":\"$id\",\"metadata_patch\":{\"status_updated_at\":\"0000-01-01T00:00:00Z\"},\"confirm\":true}"
+expect_in "cannot change: status_updated_at" "$(mcp "$key" update_thought "$args")" "client-set status_updated_at"
 code="$(curl -s -o /dev/null -w '%{http_code}' "$base/api/thoughts" -H "x-brain-key: $key")"
 [ "$code" = 200 ] || fail "thought list returned $code after rejected patches"
 pass "forbidden and badly typed keys rejected"
@@ -141,5 +146,13 @@ args="{\"id\":\"$id\",\"new_content\":\"alpha final\"}"
 
 expect_in "No change" "$(mcp "$key" update_thought "$args")" "no-op edit"
 pass "no-op edit answered before any preview"
+
+echo "== update_thought content edit onto existing content"
+args="{\"id\":\"$id\",\"new_content\":\"BETA   thought\",\"confirm\":true}"
+expect_in "already has this exact content" "$(mcp "$key" update_thought "$args")" "cloned brain"
+legacy_id="$(sql "SELECT id FROM brain_legacy.thoughts WHERE content = 'legacy alpha'")"
+args="{\"id\":\"$legacy_id\",\"new_content\":\"legacy beta\",\"confirm\":true}"
+expect_in "already has this exact content" "$(mcp "$legacy_key" update_thought "$args")" "legacy-named index"
+pass "duplicate content refused with guidance on both index names"
 
 echo "SMOKE OK"

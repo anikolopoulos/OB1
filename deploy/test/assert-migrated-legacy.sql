@@ -13,6 +13,12 @@ DO $$ BEGIN
 END $$;
 
 DO $$ BEGIN
+  IF (SELECT string_agg(content_fingerprint, ',' ORDER BY content_fingerprint) FROM thoughts
+       WHERE content IN ('Same text', 'same  TEXT')) <> 'stale-pair-1,stale-pair-2'
+  THEN RAISE EXCEPTION 'stale rows correcting to the same value were changed'; END IF;
+END $$;
+
+DO $$ BEGIN
   IF (SELECT content_fingerprint FROM thoughts WHERE content = 'legacy null') IS NOT NULL
   THEN RAISE EXCEPTION 'migration filled a NULL fingerprint'; END IF;
 END $$;
