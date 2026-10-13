@@ -256,7 +256,11 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
     {
       title: 'Update Thought',
       description: [
-        'Update the content of an existing thought, identified by the `id` returned from `search_thoughts` or `list_thoughts`. Use ONLY to:',
+        'Update the content and/or metadata of an existing thought, identified by the `id` returned from `search_thoughts` or `list_thoughts`.',
+        '',
+        'Metadata-only edits (tags, status, review flags, cross-references): pass `metadata_patch` without `new_content`. It is shallow-merged into the existing metadata — keys you do not mention are left unchanged. No re-embedding and no AI re-extraction, so it is cheap. Never rewrite content just to add a tag.',
+        '',
+        'Content edits: use `new_content` ONLY to:',
         '  • fix factual errors',
         '  • correct transcription mistakes',
         '  • complete a thought that was captured incomplete',
@@ -264,24 +268,32 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
         '',
         'Thoughts in the Open Brain are atomic — new ideas, later reflections, or added context belong in NEW thoughts, never appended to old ones. If the user asks you to "add X to that thought", capture a new related thought instead; semantic search will surface it alongside the original.',
         '',
-        'Mandatory two-phase protocol, one thought at a time:',
-        '  1. Call first with { id, new_content } → returns a BEFORE / AFTER preview. No changes are made.',
+        'Mandatory two-phase protocol, one thought at a time (applies to metadata-only edits too):',
+        '  1. Call first with { id, new_content and/or metadata_patch } → returns a BEFORE / AFTER preview. No changes are made.',
         '  2. Show the preview to the user verbatim and wait for their explicit confirmation for *that specific* thought.',
-        '  3. Only then call again with { id, new_content, confirm: true } to execute.',
+        '  3. Only then call again with the same arguments plus confirm: true to execute.',
         '',
         'Never skip the preview. Never batch-confirm. Never proceed without an explicit "yes" from the user for the thought in question.',
         '',
-        '`new_content` must be the complete final text of the thought after editing — not a diff, patch, or instruction. Updating re-embeds the thought and re-extracts its metadata.',
+        '`new_content` must be the complete final text of the thought after editing — not a diff, patch, or instruction. Updating content re-embeds the thought and re-extracts its metadata. When both are given, `metadata_patch` is applied on top of the re-extracted metadata.',
       ].join('\n'),
       inputSchema: z
         .object({
           id: z.string().uuid().describe('UUID of the thought to update (from search_thoughts or list_thoughts)'),
-          new_content: z.string().min(1).describe('Complete final text of the thought after editing — never a diff or instruction'),
+          new_content: z
+            .string()
+            .min(1)
+            .optional()
+            .describe('Complete final text of the thought after editing — never a diff or instruction. Omit for a metadata-only edit.'),
+          metadata_patch: z
+            .record(z.string(), z.unknown())
+            .optional()
+            .describe('Keys to add or overwrite in the thought\'s metadata (shallow merge; unmentioned keys are kept). No re-embedding. Example: {"status": "superseded"}'),
           confirm: z
             .boolean()
             .optional()
             .default(false)
-            .describe('Set to true ONLY after the user has explicitly approved the preview returned from a prior call with the same id and new_content'),
+            .describe('Set to true ONLY after the user has explicitly approved the preview returned from a prior call with the same arguments'),
         })
         .strict(),
       annotations: {
@@ -292,7 +304,12 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
         openWorldHint: false,
       },
     },
-    withErrorHandler(async ({ id, new_content, confirm }) => {
+    withErrorHandler(async ({ id, new_content, metadata_patch, confirm }) => {
+      const hasPatch = metadata_patch !== undefined && Object.keys(metadata_patch).length > 0;
+      if (new_content === undefined && !hasPatch) {
+        return errorResult('Provide new_content, a non-empty metadata_patch, or both.');
+      }
+
       const { rows: existingRows } = await ctx.query(
         'SELECT id, content, metadata, created_at FROM thoughts WHERE id = $1',
         [id]
@@ -307,12 +324,25 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
         created_at: string;
       };
 
+      const contentChanges = new_content !== undefined && new_content !== existing.content;
+      const patch = hasPatch ? metadata_patch : undefined;
+
       if (!confirm) {
-        return textResult(buildUpdatePreview(id, existing, new_content));
+        return textResult(buildUpdatePreview(id, existing, contentChanges ? new_content : undefined, patch));
       }
 
-      if (existing.content === new_content) {
+      if (!contentChanges && !patch) {
         return textResult(`No change — new_content is identical to the existing content of thought ${id}.`);
+      }
+
+      if (!contentChanges) {
+        await ctx.query(
+          'UPDATE thoughts SET metadata = metadata || $1::jsonb WHERE id = $2',
+          [JSON.stringify(patch), id]
+        );
+        return textResult(
+          [`Updated metadata of thought ${id} (content unchanged, not re-embedded).`, '', 'MERGED KEYS:', indent(JSON.stringify(patch, null, 2))].join('\n')
+        );
       }
 
       const [embedding, freshMetadata] = await Promise.all([
@@ -323,6 +353,7 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
       const mergedMetadata = {
         ...(existing.metadata ?? {}),
         ...freshMetadata,
+        ...(patch ?? {}),
       };
 
       try {
@@ -357,6 +388,7 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
           '',
           'AFTER:',
           indent(new_content),
+          ...(patch ? ['', 'MERGED KEYS:', indent(JSON.stringify(patch, null, 2))] : []),
         ].join('\n')
       );
     }, 'update_thought')
@@ -459,22 +491,38 @@ function formatMetaLine(metadata: Record<string, unknown>, createdAt: string): s
 function buildUpdatePreview(
   id: string,
   existing: { content: string; metadata: Record<string, unknown>; created_at: string },
-  newContent: string
+  newContent: string | undefined,
+  metadataPatch: Record<string, unknown> | undefined
 ): string {
-  return [
+  const lines = [
     `PREVIEW — update_thought will change thought ${id}`,
     `(${formatMetaLine(existing.metadata, existing.created_at)})`,
-    '',
-    'BEFORE:',
-    indent(existing.content),
-    '',
-    'AFTER:',
-    indent(newContent),
+  ];
+  if (newContent !== undefined) {
+    lines.push('', 'BEFORE:', indent(existing.content), '', 'AFTER:', indent(newContent));
+  } else {
+    lines.push('', 'Content: unchanged (no re-embedding).');
+  }
+  if (metadataPatch) {
+    const before = Object.fromEntries(
+      Object.keys(metadataPatch).map((k) => [k, existing.metadata?.[k] ?? null])
+    );
+    lines.push(
+      '',
+      'METADATA BEFORE (patched keys only):',
+      indent(JSON.stringify(before, null, 2)),
+      '',
+      'METADATA AFTER (patched keys only):',
+      indent(JSON.stringify(metadataPatch, null, 2))
+    );
+  }
+  lines.push(
     '',
     'Show this preview to the user and wait for their explicit "yes". To apply,',
-    'call update_thought again with the same id and new_content AND confirm: true.',
-    'Otherwise the thought is unchanged.',
-  ].join('\n');
+    'call update_thought again with the same arguments AND confirm: true.',
+    'Otherwise the thought is unchanged.'
+  );
+  return lines.join('\n');
 }
 
 function buildDeletePreview(
