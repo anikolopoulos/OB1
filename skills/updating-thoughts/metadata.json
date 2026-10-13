@@ -1,0 +1,32 @@
+{
+  "name": "Updating Thoughts",
+  "description": "Behavioral skill for editing an existing Open Brain thought with the update_thought MCP tool — choosing between a cheap metadata patch and a content rewrite, with a preview-then-confirm step.",
+  "category": "skills",
+  "author": {
+    "name": "Ezana Azene",
+    "github": "eazene"
+  },
+  "version": "1.0.0",
+  "requires": {
+    "open_brain": true,
+    "services": [
+      "Self-hosted Open Brain (Docker)"
+    ],
+    "tools": [
+      "Open Brain core MCP server (update_thought, delete_thought)",
+      "AI client with reusable skills, rules, or custom instructions"
+    ]
+  },
+  "tags": [
+    "skill",
+    "update",
+    "edit",
+    "metadata",
+    "mcp",
+    "open-brain"
+  ],
+  "difficulty": "beginner",
+  "estimated_time": "5 minutes",
+  "created": "2026-07-11",
+  "updated": "2026-10-13"
+}

@@ -3,6 +3,42 @@ import { z } from 'zod';
 import type { ToolContext } from '../tool-context.js';
 import { registerTool, withErrorHandler, textResult, errorResult } from './tool-helpers.js';
 
+// metadata_patch guard. REST reads cast importance/quality_score to int and
+// status_updated_at to timestamptz, stats unnests topics, and search filters on
+// sensitivity_tier, so a badly typed value would break those reads for the whole
+// brain. source and slack_ts drive the Slack dedup index and must not be edited.
+// status_updated_at is always stamped by the server: ISO strings that zod accepts
+// (year 0000, offsets past ±15:59) are rejected by ::timestamptz.
+const PATCH_MAX_BYTES = 16_384;
+const PATCH_MAX_KEYS = 50;
+const PATCH_FORBIDDEN_KEYS = ['source', 'slack_ts', 'status_updated_at'];
+const patchReservedKeys = z
+  .object({
+    importance: z.number().int().min(1).max(10),
+    quality_score: z.number().int().min(0).max(100),
+    topics: z.array(z.string()),
+    people: z.array(z.string()),
+    action_items: z.array(z.string()),
+    type: z.string().min(1),
+    status: z.string().nullable(),
+    sensitivity_tier: z.enum(['standard', 'personal', 'restricted']),
+  })
+  .partial();
+
+function validateMetadataPatch(patch: Record<string, unknown>): string | null {
+  const forbidden = PATCH_FORBIDDEN_KEYS.filter((k) => k in patch);
+  if (forbidden.length) return `metadata_patch cannot change: ${forbidden.join(', ')}`;
+  if (Object.keys(patch).length > PATCH_MAX_KEYS) return `metadata_patch may set at most ${PATCH_MAX_KEYS} keys`;
+  const json = JSON.stringify(patch);
+  if (Buffer.byteLength(json) > PATCH_MAX_BYTES) return `metadata_patch must be at most ${PATCH_MAX_BYTES} bytes as JSON`;
+  if (json.includes('\\u0000')) return 'metadata_patch must not contain NUL characters';
+  const parsed = patchReservedKeys.safeParse(patch);
+  if (!parsed.success) {
+    return 'Invalid metadata_patch: ' + parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
+  }
+  return null;
+}
+
 export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
   registerTool(
     server,
@@ -256,7 +292,11 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
     {
       title: 'Update Thought',
       description: [
-        'Update the content of an existing thought, identified by the `id` returned from `search_thoughts` or `list_thoughts`. Use ONLY to:',
+        'Update the content and/or metadata of an existing thought, identified by the `id` returned from `search_thoughts` or `list_thoughts`.',
+        '',
+        'Metadata-only edits (tags, status, review flags, cross-references): pass `metadata_patch` without `new_content`. It is shallow-merged into the existing metadata — keys you do not mention are left unchanged. No re-embedding and no AI re-extraction, so it is cheap. Never rewrite content just to add a tag. `source`, `slack_ts` and `status_updated_at` cannot be patched; `importance` is an integer 1-10, `quality_score` an integer 0-100, `topics`/`people`/`action_items` are string arrays, `sensitivity_tier` is standard, personal or restricted. Patching `status` also stamps `status_updated_at`.',
+        '',
+        'Content edits: use `new_content` ONLY to:',
         '  • fix factual errors',
         '  • correct transcription mistakes',
         '  • complete a thought that was captured incomplete',
@@ -264,24 +304,32 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
         '',
         'Thoughts in the Open Brain are atomic — new ideas, later reflections, or added context belong in NEW thoughts, never appended to old ones. If the user asks you to "add X to that thought", capture a new related thought instead; semantic search will surface it alongside the original.',
         '',
-        'Mandatory two-phase protocol, one thought at a time:',
-        '  1. Call first with { id, new_content } → returns a BEFORE / AFTER preview. No changes are made.',
+        'Mandatory two-phase protocol, one thought at a time (applies to metadata-only edits too):',
+        '  1. Call first with { id, new_content and/or metadata_patch } → returns a BEFORE / AFTER preview. No changes are made.',
         '  2. Show the preview to the user verbatim and wait for their explicit confirmation for *that specific* thought.',
-        '  3. Only then call again with { id, new_content, confirm: true } to execute.',
+        '  3. Only then call again with the same arguments plus confirm: true to execute.',
         '',
         'Never skip the preview. Never batch-confirm. Never proceed without an explicit "yes" from the user for the thought in question.',
         '',
-        '`new_content` must be the complete final text of the thought after editing — not a diff, patch, or instruction. Updating re-embeds the thought and re-extracts its metadata.',
+        '`new_content` must be the complete final text of the thought after editing — not a diff, patch, or instruction. Updating content re-embeds the thought and re-extracts its metadata. When both are given, `metadata_patch` is applied on top of the re-extracted metadata.',
       ].join('\n'),
       inputSchema: z
         .object({
           id: z.string().uuid().describe('UUID of the thought to update (from search_thoughts or list_thoughts)'),
-          new_content: z.string().min(1).describe('Complete final text of the thought after editing — never a diff or instruction'),
+          new_content: z
+            .string()
+            .min(1)
+            .optional()
+            .describe('Complete final text of the thought after editing — never a diff or instruction. Omit for a metadata-only edit.'),
+          metadata_patch: z
+            .record(z.string(), z.unknown())
+            .optional()
+            .describe('Keys to add or overwrite in the thought\'s metadata (shallow merge; unmentioned keys are kept). No re-embedding. Example: {"status": "superseded"}'),
           confirm: z
             .boolean()
             .optional()
             .default(false)
-            .describe('Set to true ONLY after the user has explicitly approved the preview returned from a prior call with the same id and new_content'),
+            .describe('Set to true ONLY after the user has explicitly approved the preview returned from a prior call with the same arguments'),
         })
         .strict(),
       annotations: {
@@ -292,7 +340,16 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
         openWorldHint: false,
       },
     },
-    withErrorHandler(async ({ id, new_content, confirm }) => {
+    withErrorHandler(async ({ id, new_content, metadata_patch, confirm }) => {
+      const hasPatch = metadata_patch !== undefined && Object.keys(metadata_patch).length > 0;
+      if (new_content === undefined && !hasPatch) {
+        return errorResult('Provide new_content, a non-empty metadata_patch, or both.');
+      }
+      if (hasPatch) {
+        const invalid = validateMetadataPatch(metadata_patch);
+        if (invalid) return errorResult(invalid);
+      }
+
       const { rows: existingRows } = await ctx.query(
         'SELECT id, content, metadata, created_at FROM thoughts WHERE id = $1',
         [id]
@@ -307,12 +364,33 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
         created_at: string;
       };
 
-      if (!confirm) {
-        return textResult(buildUpdatePreview(id, existing, new_content));
+      const contentChanges = new_content !== undefined && new_content !== existing.content;
+      // Same rule as the REST status edit: a status change records when it happened.
+      const patch = hasPatch
+        ? 'status' in metadata_patch
+          ? { ...metadata_patch, status_updated_at: new Date().toISOString() }
+          : metadata_patch
+        : undefined;
+
+      if (!contentChanges && !patch) {
+        return textResult(`No change — new_content is identical to the existing content of thought ${id}.`);
       }
 
-      if (existing.content === new_content) {
-        return textResult(`No change — new_content is identical to the existing content of thought ${id}.`);
+      if (!confirm) {
+        return textResult(buildUpdatePreview(id, existing, contentChanges ? new_content : undefined, patch));
+      }
+
+      if (!contentChanges) {
+        const { rowCount } = await ctx.query(
+          'UPDATE thoughts SET metadata = metadata || $1::jsonb WHERE id = $2',
+          [JSON.stringify(patch), id]
+        );
+        if (!rowCount) {
+          return errorResult(`Thought ${id} no longer exists — it was deleted between the preview and this confirmation.`);
+        }
+        return textResult(
+          [`Updated metadata of thought ${id} (content unchanged, not re-embedded).`, '', 'MERGED KEYS:', indent(JSON.stringify(patch, null, 2))].join('\n')
+        );
       }
 
       const [embedding, freshMetadata] = await Promise.all([
@@ -323,10 +401,12 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
       const mergedMetadata = {
         ...(existing.metadata ?? {}),
         ...freshMetadata,
+        ...(patch ?? {}),
       };
 
+      let updated: number | null = 0;
       try {
-        await ctx.query(
+        ({ rowCount: updated } = await ctx.query(
           `UPDATE thoughts
               SET content             = $1,
                   content_fingerprint = encode(
@@ -337,15 +417,20 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
                   metadata            = $3::jsonb
             WHERE id = $4`,
           [new_content, JSON.stringify(embedding), JSON.stringify(mergedMetadata), id]
-        );
+        ));
       } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (msg.includes('content_fingerprint')) {
+        // Match on the key in `detail`: the unique index is named
+        // idx_thoughts_fingerprint or thoughts_content_fingerprint_idx by brain.
+        const pgErr = err as { code?: string; detail?: string };
+        if (pgErr.code === '23505' && pgErr.detail?.includes('(content_fingerprint)')) {
           return errorResult(
             `Cannot update: another thought already has this exact content. Locate it via search_thoughts and merge or delete one before retrying.`
           );
         }
         throw err;
+      }
+      if (!updated) {
+        return errorResult(`Thought ${id} no longer exists — it was deleted between the preview and this confirmation.`);
       }
 
       return textResult(
@@ -357,6 +442,7 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
           '',
           'AFTER:',
           indent(new_content),
+          ...(patch ? ['', 'MERGED KEYS:', indent(JSON.stringify(patch, null, 2))] : []),
         ].join('\n')
       );
     }, 'update_thought')
@@ -459,22 +545,38 @@ function formatMetaLine(metadata: Record<string, unknown>, createdAt: string): s
 function buildUpdatePreview(
   id: string,
   existing: { content: string; metadata: Record<string, unknown>; created_at: string },
-  newContent: string
+  newContent: string | undefined,
+  metadataPatch: Record<string, unknown> | undefined
 ): string {
-  return [
+  const lines = [
     `PREVIEW — update_thought will change thought ${id}`,
     `(${formatMetaLine(existing.metadata, existing.created_at)})`,
-    '',
-    'BEFORE:',
-    indent(existing.content),
-    '',
-    'AFTER:',
-    indent(newContent),
+  ];
+  if (newContent !== undefined) {
+    lines.push('', 'BEFORE:', indent(existing.content), '', 'AFTER:', indent(newContent));
+  } else {
+    lines.push('', 'Content: unchanged (no re-embedding).');
+  }
+  if (metadataPatch) {
+    const before = Object.fromEntries(
+      Object.keys(metadataPatch).map((k) => [k, existing.metadata?.[k] ?? null])
+    );
+    lines.push(
+      '',
+      'METADATA BEFORE (patched keys only):',
+      indent(JSON.stringify(before, null, 2)),
+      '',
+      'METADATA AFTER (patched keys only):',
+      indent(JSON.stringify(metadataPatch, null, 2))
+    );
+  }
+  lines.push(
     '',
     'Show this preview to the user and wait for their explicit "yes". To apply,',
-    'call update_thought again with the same id and new_content AND confirm: true.',
-    'Otherwise the thought is unchanged.',
-  ].join('\n');
+    'call update_thought again with the same arguments AND confirm: true.',
+    'Otherwise the thought is unchanged.'
+  );
+  return lines.join('\n');
 }
 
 function buildDeletePreview(
