@@ -12,8 +12,11 @@
 -- pg_dump; re-run it when that reader is done.
 --
 -- Part 2 repairs stale fingerprints (rows whose content was edited through the
--- REST API before this trigger existed), skipping any row whose corrected
--- fingerprint is already taken by another row.
+-- REST API before this trigger existed). It skips a row when its corrected
+-- fingerprint is already taken, or when several stale rows would correct to the
+-- same value (repairing both would break the unique index and roll back the
+-- whole run). Each repaired row's updated_at moves to the migration time
+-- (trg_thoughts_updated_at).
 
 SET lock_timeout = '3s';
 
@@ -74,6 +77,7 @@ BEGIN
                AND t.content_fingerprint <> f.fp
                AND NOT EXISTS (SELECT 1 FROM %I.thoughts o
                                 WHERE o.content_fingerprint = f.fp AND o.id <> t.id)
+               AND f.fp NOT IN (SELECT fp FROM fixed GROUP BY fp HAVING count(*) > 1)
         $u$, s, s, s);
         GET DIAGNOSTICS repaired = ROW_COUNT;
 
