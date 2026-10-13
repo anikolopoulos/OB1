@@ -7,14 +7,15 @@ import { registerTool, withErrorHandler, textResult, errorResult } from './tool-
 // status_updated_at to timestamptz, stats unnests topics, and search filters on
 // sensitivity_tier, so a badly typed value would break those reads for the whole
 // brain. source and slack_ts drive the Slack dedup index and must not be edited.
+// status_updated_at is always stamped by the server: ISO strings that zod accepts
+// (year 0000, offsets past ±15:59) are rejected by ::timestamptz.
 const PATCH_MAX_BYTES = 16_384;
 const PATCH_MAX_KEYS = 50;
-const PATCH_FORBIDDEN_KEYS = ['source', 'slack_ts'];
+const PATCH_FORBIDDEN_KEYS = ['source', 'slack_ts', 'status_updated_at'];
 const patchReservedKeys = z
   .object({
     importance: z.number().int().min(1).max(10),
     quality_score: z.number().int().min(0).max(100),
-    status_updated_at: z.string().datetime({ offset: true }),
     topics: z.array(z.string()),
     people: z.array(z.string()),
     action_items: z.array(z.string()),
@@ -293,7 +294,7 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
       description: [
         'Update the content and/or metadata of an existing thought, identified by the `id` returned from `search_thoughts` or `list_thoughts`.',
         '',
-        'Metadata-only edits (tags, status, review flags, cross-references): pass `metadata_patch` without `new_content`. It is shallow-merged into the existing metadata — keys you do not mention are left unchanged. No re-embedding and no AI re-extraction, so it is cheap. Never rewrite content just to add a tag. `source` and `slack_ts` cannot be patched; `importance` is an integer 1-10, `quality_score` an integer 0-100, `topics`/`people`/`action_items` are string arrays, `sensitivity_tier` is standard, personal or restricted. Patching `status` also stamps `status_updated_at`.',
+        'Metadata-only edits (tags, status, review flags, cross-references): pass `metadata_patch` without `new_content`. It is shallow-merged into the existing metadata — keys you do not mention are left unchanged. No re-embedding and no AI re-extraction, so it is cheap. Never rewrite content just to add a tag. `source`, `slack_ts` and `status_updated_at` cannot be patched; `importance` is an integer 1-10, `quality_score` an integer 0-100, `topics`/`people`/`action_items` are string arrays, `sensitivity_tier` is standard, personal or restricted. Patching `status` also stamps `status_updated_at`.',
         '',
         'Content edits: use `new_content` ONLY to:',
         '  • fix factual errors',
@@ -366,7 +367,7 @@ export function registerCoreTools(server: McpServer, ctx: ToolContext): void {
       const contentChanges = new_content !== undefined && new_content !== existing.content;
       // Same rule as the REST status edit: a status change records when it happened.
       const patch = hasPatch
-        ? 'status' in metadata_patch && !('status_updated_at' in metadata_patch)
+        ? 'status' in metadata_patch
           ? { ...metadata_patch, status_updated_at: new Date().toISOString() }
           : metadata_patch
         : undefined;
