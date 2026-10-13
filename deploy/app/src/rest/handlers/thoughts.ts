@@ -243,17 +243,28 @@ export async function updateThought(c: Context): Promise<Response> {
 
   const embeddingParam = newEmbedding !== null ? JSON.stringify(newEmbedding) : null;
 
-  const result = await brainQuery(
-    c,
-    `UPDATE thoughts
-        SET content    = COALESCE($2, content),
-            embedding  = COALESCE($3::vector, embedding),
-            metadata   = metadata || $4::jsonb,
-            updated_at = now()
-      WHERE id = $1::uuid
-  RETURNING id`,
-    [id, content ?? null, embeddingParam, JSON.stringify(metaPatch)],
-  );
+  // The fingerprint trigger recomputes content_fingerprint when content
+  // changes, so an edit matching another thought's content hits the unique index.
+  let result;
+  try {
+    result = await brainQuery(
+      c,
+      `UPDATE thoughts
+          SET content    = COALESCE($2, content),
+              embedding  = COALESCE($3::vector, embedding),
+              metadata   = metadata || $4::jsonb,
+              updated_at = now()
+        WHERE id = $1::uuid
+    RETURNING id`,
+      [id, content ?? null, embeddingParam, JSON.stringify(metaPatch)],
+    );
+  } catch (err: unknown) {
+    const pgErr = err as { code?: string; constraint?: string };
+    if (pgErr.code === '23505' && pgErr.constraint?.includes('content_fingerprint')) {
+      return c.json({ error: 'Another thought already has this exact content' }, 409);
+    }
+    throw err;
+  }
 
   if (result.rows.length === 0) {
     return c.json({ error: 'Thought not found' }, 404);
