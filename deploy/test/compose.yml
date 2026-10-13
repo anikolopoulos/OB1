@@ -1,0 +1,25 @@
+# Throwaway stack for deploy/test/smoke.sh. The database has no volume; only the
+# app and the mock AI service are published, on 127.0.0.1. The healthcheck uses
+# TCP: during init the entrypoint runs a socket-only server that would pass a
+# socket check before deploy/db/init has finished.
+services:
+  postgres:
+    image: pgvector/pgvector:pg18
+    environment: { POSTGRES_USER: ob1, POSTGRES_PASSWORD: smoke, POSTGRES_DB: ob1 }
+    volumes: ["../db/init:/docker-entrypoint-initdb.d:ro"]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ob1 -d ob1"], interval: 2s, retries: 60 }
+  mockllm:
+    image: node:22-bookworm-slim
+    command: ["node", "/m/mock-llm.mjs"]
+    volumes: ["./mock-llm.mjs:/m/mock-llm.mjs:ro"]
+    ports: ["127.0.0.1:${SMOKE_LLM_PORT:-3098}:4000"]
+  app:
+    build: { context: ../app }
+    environment:
+      DATABASE_URL: postgresql://ob1:smoke@postgres:5432/ob1
+      LITELLM_BASE_URL: http://mockllm:4000/v1
+      LITELLM_API_KEY: smoke
+      ADMIN_API_KEY: smoke-admin
+      PORT: "3000"
+    ports: ["127.0.0.1:${SMOKE_PORT:-3099}:3000"]
+    depends_on: { postgres: { condition: service_healthy }, mockllm: { condition: service_started } }
